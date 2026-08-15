@@ -31,8 +31,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // ?force=1 sends immediately, ignoring the time window, the pause setting
+  // and the already-emailed guard. Without it the only way to prove the
+  // whole chain works is to wait until 17:00 and hope — and a legitimate
+  // "skipped, too early" response is indistinguishable from a broken
+  // deployment. Still requires CRON_SECRET, so it isn't publicly callable.
+  const force = req.nextUrl.searchParams.get("force") === "1";
+
   const hour = londonHour();
-  if (hour < SEND_HOUR) {
+  if (!force && hour < SEND_HOUR) {
     return NextResponse.json({
       skipped: true,
       reason: `Before ${SEND_HOUR}:00 Europe/London (it's ${hour}:00).`,
@@ -42,7 +49,7 @@ export async function GET(req: NextRequest) {
   const today = londonDateString();
 
   try {
-    if (await isPaused(today)) {
+    if (!force && (await isPaused(today))) {
       return NextResponse.json({ skipped: true, reason: "Reminders are paused." });
     }
 
@@ -50,7 +57,7 @@ export async function GET(req: NextRequest) {
     await purgeStalePantryItems(today);
 
     const existing = await getPlannedMeal(today);
-    if (existing?.emailedAt) {
+    if (!force && existing?.emailedAt) {
       return NextResponse.json({ skipped: true, reason: "Already emailed today." });
     }
 

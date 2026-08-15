@@ -8,13 +8,67 @@ name: Daily dinner reminder
 on:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Send now, ignoring the 17:00 window (for testing)"
+        type: boolean
+        default: false
 
 jobs:
   daily-reminder:
     runs-on: ubuntu-latest
     steps:
       - name: Tonight's dinner email
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          FORCE: ${{ inputs.force }}
         run: |
-          curl -sf -X GET "${{ secrets.APP_URL }}/api/cron/daily-reminder" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          set -euo pipefail
+
+          if [ -z "${APP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::APP_URL and CRON_SECRET repository secrets must both be set."
+            exit 1
+          fi
+
+          # Deliberately NOT `curl -f`: -f ignores 3xx, so a redirect (e.g.
+          # Vercel Deployment Protection bouncing us to its SSO login) exited
+          # 0 and this job reported success while the endpoint never ran.
+          # Capture the status instead and treat anything outside 2xx as a
+          # failure, printing the body so the cause is visible in the log.
+          url="${APP_URL}/api/cron/daily-reminder"
+          if [ "${FORCE:-false}" = "true" ]; then
+            url="${url}?force=1"
+            echo "Forcing a send, ignoring the 17:00 Europe/London window."
+          fi
+
+          status=$(curl -sS -o response.txt -w '%{http_code}' \
+            --max-time 60 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "$url")
+
+          echo "HTTP ${status}"
+          echo "--- response body ---"
+          cat response.txt || true
+          echo
+
+          case "$status" in
+            2*)
+              echo "Reminder endpoint ran."
+              ;;
+            3*)
+              echo "::error::Redirected (HTTP ${status}) — the request never reached the app. \
+          This is usually Vercel Deployment Protection; disable it under \
+          Settings > Deployment Protection, or check APP_URL points at the stable production domain."
+              exit 1
+              ;;
+            401|403)
+              echo "::error::Rejected (HTTP ${status}) — CRON_SECRET here does not match the one set in Vercel."
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected HTTP ${status} from the reminder endpoint."
+              exit 1
+              ;;
+          esac
