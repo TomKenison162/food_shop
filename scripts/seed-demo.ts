@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { eq } from "drizzle-orm";
 import { db } from "../src/lib/db/client";
 import { meals, mealIngredients } from "../src/lib/db/schema";
 import { tierForCost } from "../src/lib/tiering";
@@ -942,10 +943,697 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "parmesan", quantity: "60g" },
     ],
   },
+
+  // --- Beef, round two: more adventurous ---
+  {
+    name: "Korean Beef Bulgogi",
+    description: "Sweet-savoury marinated beef, seared fast and served over rice.",
+    primaryProtein: "beef",
+    isClassic: false,
+    costTwoPerson: 7.4,
+    instructions: [
+      "Marinate thinly sliced beef sirloin in soy, pear or apple, garlic, ginger and sesame oil for 30 minutes.",
+      "Sear in a very hot pan or wok in batches until caramelised at the edges.",
+      "Serve over rice with pickled vegetables and a fried egg.",
+    ],
+    ingredients: [
+      { name: "beef sirloin", quantity: "400g" },
+      { name: "soy sauce", quantity: "4 tbsp" },
+      { name: "sesame oil", quantity: "1 tbsp" },
+      { name: "rice", quantity: "300g" },
+    ],
+  },
+  {
+    name: "Beef Rendang",
+    description: "Indonesian slow-cooked beef in a deeply spiced coconut sauce.",
+    primaryProtein: "beef",
+    isClassic: false,
+    costTwoPerson: 8.3,
+    instructions: [
+      "Blend lemongrass, shallots, garlic, chilli and galangal into a paste.",
+      "Fry the paste, add diced beef shin, coconut milk and kaffir lime leaves.",
+      "Simmer uncovered for 2+ hours, stirring occasionally, until dark and thick.",
+    ],
+    ingredients: [
+      { name: "diced beef shin", quantity: "500g" },
+      { name: "coconut milk", quantity: "400ml" },
+      { name: "lemongrass", quantity: "2 stalks" },
+      { name: "rice", quantity: "300g" },
+    ],
+  },
+  {
+    name: "Vietnamese Beef Pho",
+    description: "Fragrant beef noodle soup with star anise and fresh herbs.",
+    primaryProtein: "beef",
+    isClassic: false,
+    costTwoPerson: 6.7,
+    instructions: [
+      "Simmer beef stock with charred onion, ginger, star anise and cinnamon for 30 minutes.",
+      "Cook rice noodles and thinly slice raw beef sirloin.",
+      "Assemble bowls: noodles, raw beef (cooked by the hot broth), pour over broth, top with herbs and beansprouts.",
+    ],
+    ingredients: [
+      { name: "beef sirloin", quantity: "250g" },
+      { name: "beef stock", quantity: "1.2L" },
+      { name: "rice noodles", quantity: "250g" },
+      { name: "beansprouts", quantity: "150g" },
+    ],
+  },
+  {
+    name: "Beef Bourguignon",
+    description: "Classic French braise of beef in red wine with bacon and pearl onions.",
+    primaryProtein: "beef",
+    isClassic: false,
+    costTwoPerson: 9.1,
+    instructions: [
+      "Brown diced beef chuck in batches, set aside.",
+      "Fry bacon lardons and pearl onions, add mushrooms and garlic.",
+      "Return beef with red wine and stock, simmer covered 2.5 hours until tender.",
+    ],
+    ingredients: [
+      { name: "diced beef chuck", quantity: "500g" },
+      { name: "red wine", quantity: "400ml" },
+      { name: "bacon lardons", quantity: "120g" },
+      { name: "pearl onions", quantity: "150g" },
+    ],
+  },
+  {
+    name: "Thai Beef Salad",
+    description: "Zesty seared beef salad with lime, chilli and fresh herbs.",
+    primaryProtein: "beef",
+    isClassic: false,
+    costTwoPerson: 6.9,
+    instructions: [
+      "Sear a sirloin steak to medium-rare, rest and slice thinly.",
+      "Whisk lime juice, fish sauce, sugar and chilli for the dressing.",
+      "Toss beef with salad leaves, cucumber, red onion and herbs, dress and serve.",
+    ],
+    ingredients: [
+      { name: "beef sirloin", quantity: "350g" },
+      { name: "lime", quantity: "2" },
+      { name: "fish sauce", quantity: "2 tbsp" },
+      { name: "mixed salad leaves", quantity: "150g" },
+    ],
+  },
+  {
+    name: "Beef Yakiniku Skewers",
+    description: "Japanese-style grilled beef skewers with a sweet soy glaze.",
+    primaryProtein: "beef",
+    isClassic: false,
+    costTwoPerson: 7.0,
+    instructions: [
+      "Cube beef sirloin and thread onto skewers with spring onion.",
+      "Marinate briefly in soy, mirin, sake and sugar.",
+      "Grill hot and fast, basting with the glaze, serve with rice.",
+    ],
+    ingredients: [
+      { name: "beef sirloin", quantity: "400g" },
+      { name: "soy sauce", quantity: "3 tbsp" },
+      { name: "mirin", quantity: "2 tbsp" },
+      { name: "spring onion", quantity: "4" },
+    ],
+  },
+
+  // --- Chicken, round two ---
+  {
+    name: "Chicken Shawarma",
+    description: "Spiced chicken thighs, charred and wrapped with garlic sauce.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 5.6,
+    instructions: [
+      "Marinate chicken thighs in shawarma spices, yoghurt, garlic and lemon.",
+      "Roast or grill until charred and cooked through, slice.",
+      "Serve in flatbreads with garlic sauce, pickles and salad.",
+    ],
+    ingredients: [
+      { name: "chicken thighs", quantity: "500g" },
+      { name: "natural yoghurt", quantity: "100g" },
+      { name: "flatbreads", quantity: "4" },
+      { name: "garlic", quantity: "3 cloves" },
+    ],
+  },
+  {
+    name: "Thai Green Chicken Curry",
+    description: "Fragrant coconut curry with chicken, aubergine and Thai basil.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 6.3,
+    instructions: [
+      "Fry green curry paste until fragrant.",
+      "Add coconut milk, sliced chicken thigh and aubergine, simmer 15 minutes.",
+      "Stir through Thai basil and serve with jasmine rice.",
+    ],
+    ingredients: [
+      { name: "chicken thighs", quantity: "450g" },
+      { name: "coconut milk", quantity: "400ml" },
+      { name: "green curry paste", quantity: "3 tbsp" },
+      { name: "aubergine", quantity: "1" },
+    ],
+  },
+  {
+    name: "Jerk Chicken",
+    description: "Caribbean spiced chicken with a fiery, fragrant marinade.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 5.5,
+    instructions: [
+      "Blend scotch bonnet, allspice, thyme, garlic and lime for the marinade.",
+      "Marinate chicken thighs for at least an hour, ideally overnight.",
+      "Grill or bake until charred and cooked through, serve with rice and peas.",
+    ],
+    ingredients: [
+      { name: "chicken thighs", quantity: "6" },
+      { name: "scotch bonnet", quantity: "1" },
+      { name: "allspice", quantity: "2 tsp" },
+      { name: "rice and peas", quantity: "300g" },
+    ],
+  },
+  {
+    name: "Chicken Adobo",
+    description: "Filipino braised chicken in soy, vinegar and garlic.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 4.9,
+    instructions: [
+      "Combine chicken thighs, soy sauce, vinegar, garlic and bay leaves in a pot.",
+      "Simmer 30-40 minutes until chicken is tender and sauce has reduced.",
+      "Serve with steamed rice.",
+    ],
+    ingredients: [
+      { name: "chicken thighs", quantity: "600g" },
+      { name: "soy sauce", quantity: "80ml" },
+      { name: "white vinegar", quantity: "60ml" },
+      { name: "rice", quantity: "300g" },
+    ],
+  },
+  {
+    name: "Butter Chicken",
+    description: "Silky, mildly spiced tomato and butter curry.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 6.5,
+    instructions: [
+      "Marinate diced chicken thigh in yoghurt and garam masala.",
+      "Grill or pan-fry until charred, set aside.",
+      "Simmer tomato passata with butter, cream and spices, add chicken, finish with more butter.",
+    ],
+    ingredients: [
+      { name: "chicken thighs", quantity: "500g" },
+      { name: "tomato passata", quantity: "400ml" },
+      { name: "butter", quantity: "60g" },
+      { name: "double cream", quantity: "100ml" },
+    ],
+  },
+  {
+    name: "Chicken Parmigiana",
+    description: "Breaded chicken breast topped with tomato sauce and melted mozzarella.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 6.1,
+    instructions: [
+      "Coat chicken breasts in flour, egg and breadcrumbs, fry until golden.",
+      "Top with tomato sauce and mozzarella, bake at 200C for 10 minutes.",
+      "Serve with spaghetti or a green salad.",
+    ],
+    ingredients: [
+      { name: "chicken breast", quantity: "2" },
+      { name: "mozzarella", quantity: "125g" },
+      { name: "tomato passata", quantity: "300ml" },
+      { name: "breadcrumbs", quantity: "100g" },
+    ],
+  },
+  {
+    name: "Hainanese Chicken Rice",
+    description: "Poached chicken with fragrant rice cooked in the poaching broth.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 5.2,
+    instructions: [
+      "Gently poach a whole chicken in ginger and spring onion stock until just cooked.",
+      "Cook rice in the poaching broth with garlic and ginger.",
+      "Slice chicken, serve over rice with chilli-ginger sauce and cucumber.",
+    ],
+    ingredients: [
+      { name: "whole chicken", quantity: "1.2kg" },
+      { name: "rice", quantity: "300g" },
+      { name: "ginger", quantity: "50g" },
+      { name: "cucumber", quantity: "1" },
+    ],
+  },
+  {
+    name: "Nashville Hot Chicken",
+    description: "Crispy fried chicken with a fiery cayenne butter glaze.",
+    primaryProtein: "chicken",
+    isClassic: false,
+    costTwoPerson: 6.0,
+    instructions: [
+      "Marinate chicken thighs in buttermilk, then coat in seasoned flour.",
+      "Fry until deeply golden and cooked through.",
+      "Brush with a cayenne-spiked hot butter glaze, serve on white bread with pickles.",
+    ],
+    ingredients: [
+      { name: "chicken thighs", quantity: "6" },
+      { name: "buttermilk", quantity: "300ml" },
+      { name: "cayenne pepper", quantity: "2 tbsp" },
+      { name: "white bread", quantity: "4 slices" },
+    ],
+  },
+
+  // --- Pork, round two ---
+  {
+    name: "Korean Pork Bulgogi",
+    description: "Spicy-sweet gochujang pork, stir-fried fast and hot.",
+    primaryProtein: "pork",
+    isClassic: false,
+    costTwoPerson: 5.9,
+    instructions: [
+      "Marinate thinly sliced pork shoulder in gochujang, soy, garlic and sugar.",
+      "Stir fry in a very hot pan until caramelised.",
+      "Serve over rice with pickled vegetables.",
+    ],
+    ingredients: [
+      { name: "pork shoulder", quantity: "400g" },
+      { name: "gochujang", quantity: "3 tbsp" },
+      { name: "soy sauce", quantity: "2 tbsp" },
+      { name: "rice", quantity: "300g" },
+    ],
+  },
+  {
+    name: "Char Siu Pork",
+    description: "Sticky Cantonese barbecue pork with a lacquered glaze.",
+    primaryProtein: "pork",
+    isClassic: false,
+    costTwoPerson: 7.2,
+    instructions: [
+      "Marinate pork shoulder strips in char siu sauce, honey and five spice overnight.",
+      "Roast at 200C, basting regularly, until sticky and caramelised.",
+      "Rest, slice and serve with rice and steamed greens.",
+    ],
+    ingredients: [
+      { name: "pork shoulder", quantity: "500g" },
+      { name: "hoisin sauce", quantity: "3 tbsp" },
+      { name: "honey", quantity: "2 tbsp" },
+      { name: "five spice", quantity: "1 tsp" },
+    ],
+  },
+  {
+    name: "Porchetta",
+    description: "Herb and garlic stuffed rolled pork roast with crackling.",
+    primaryProtein: "pork",
+    isClassic: false,
+    costTwoPerson: 9.6,
+    instructions: [
+      "Butterfly a pork joint, stuff with garlic, rosemary, fennel seed and lemon zest.",
+      "Roll and tie, score the skin well, roast at high heat then lower to finish.",
+      "Rest before carving into thick slices with crisp crackling.",
+    ],
+    ingredients: [
+      { name: "pork shoulder joint", quantity: "1.2kg" },
+      { name: "garlic", quantity: "1 bulb" },
+      { name: "rosemary", quantity: "4 sprigs" },
+      { name: "fennel seeds", quantity: "1 tbsp" },
+    ],
+  },
+  {
+    name: "Cuban Mojo Pulled Pork",
+    description: "Citrus and garlic marinated pork, slow-cooked until falling apart.",
+    primaryProtein: "pork",
+    isClassic: false,
+    costTwoPerson: 6.8,
+    instructions: [
+      "Marinate pork shoulder in orange juice, lime juice, garlic and cumin.",
+      "Slow-cook for 4-5 hours until tender enough to shred.",
+      "Shred and serve with rice and black beans.",
+    ],
+    ingredients: [
+      { name: "pork shoulder", quantity: "700g" },
+      { name: "orange juice", quantity: "200ml" },
+      { name: "lime", quantity: "2" },
+      { name: "black beans", quantity: "1 tin" },
+    ],
+  },
+  {
+    name: "Pork Ramen",
+    description: "Rich pork broth ramen with soft egg and spring onion.",
+    primaryProtein: "pork",
+    isClassic: false,
+    costTwoPerson: 6.4,
+    instructions: [
+      "Simmer pork belly slices in a rich stock with soy, garlic and ginger for 30 minutes.",
+      "Soft-boil eggs and cook ramen noodles.",
+      "Assemble bowls with broth, noodles, pork, halved eggs and spring onion.",
+    ],
+    ingredients: [
+      { name: "pork belly slices", quantity: "300g" },
+      { name: "ramen noodles", quantity: "250g" },
+      { name: "eggs", quantity: "2" },
+      { name: "chicken stock", quantity: "1L" },
+    ],
+  },
+
+  // --- Lamb, round two ---
+  {
+    name: "Lamb Biryani",
+    description: "Layered spiced rice and lamb, slow-cooked until fragrant.",
+    primaryProtein: "lamb",
+    isClassic: false,
+    costTwoPerson: 8.4,
+    instructions: [
+      "Marinate diced lamb shoulder in yoghurt and biryani spices.",
+      "Brown the lamb, then layer with part-cooked basmati rice and fried onions.",
+      "Cover and cook low until rice is fluffy and lamb is tender, then fluff and serve.",
+    ],
+    ingredients: [
+      { name: "diced lamb shoulder", quantity: "500g" },
+      { name: "basmati rice", quantity: "350g" },
+      { name: "natural yoghurt", quantity: "150g" },
+      { name: "fried onions", quantity: "100g" },
+    ],
+  },
+  {
+    name: "Lamb Doner Kebab",
+    description: "Spiced shaved lamb in warm flatbread with salad and chilli sauce.",
+    primaryProtein: "lamb",
+    isClassic: false,
+    costTwoPerson: 6.3,
+    instructions: [
+      "Marinate thin lamb steaks in cumin, paprika and garlic.",
+      "Griddle hot and fast, then slice thinly.",
+      "Serve in flatbreads with salad, chilli sauce and garlic yoghurt.",
+    ],
+    ingredients: [
+      { name: "lamb leg steaks", quantity: "400g" },
+      { name: "flatbreads", quantity: "4" },
+      { name: "natural yoghurt", quantity: "100g" },
+      { name: "chilli sauce", quantity: "3 tbsp" },
+    ],
+  },
+  {
+    name: "Lamb Vindaloo",
+    description: "Fiery, tangy Goan lamb curry with vinegar and chilli.",
+    primaryProtein: "lamb",
+    isClassic: false,
+    costTwoPerson: 7.9,
+    instructions: [
+      "Marinate diced lamb shoulder in vinegar, chilli and vindaloo spices.",
+      "Brown the lamb, add onions, tomatoes and marinade, simmer 1.5 hours.",
+      "Serve with rice and naan.",
+    ],
+    ingredients: [
+      { name: "diced lamb shoulder", quantity: "500g" },
+      { name: "malt vinegar", quantity: "4 tbsp" },
+      { name: "chopped tomatoes", quantity: "1 tin" },
+      { name: "rice", quantity: "300g" },
+    ],
+  },
+  {
+    name: "Lamb Navarin",
+    description: "French lamb stew with baby vegetables in a rich broth.",
+    primaryProtein: "lamb",
+    isClassic: false,
+    costTwoPerson: 8.7,
+    instructions: [
+      "Brown diced lamb shoulder, set aside.",
+      "Fry onion and garlic, add stock, tomato puree and lamb, simmer 1 hour.",
+      "Add baby carrots and potatoes, simmer until vegetables are tender.",
+    ],
+    ingredients: [
+      { name: "diced lamb shoulder", quantity: "500g" },
+      { name: "baby carrots", quantity: "200g" },
+      { name: "baby potatoes", quantity: "300g" },
+      { name: "lamb stock", quantity: "500ml" },
+    ],
+  },
+  {
+    name: "Lamb Chops with Chimichurri",
+    description: "Grilled lamb chops with a punchy herb and garlic sauce.",
+    primaryProtein: "lamb",
+    isClassic: false,
+    costTwoPerson: 9.8,
+    instructions: [
+      "Season lamb chops well and grill 3-4 minutes per side.",
+      "Blend parsley, garlic, red wine vinegar, chilli and oil for the chimichurri.",
+      "Rest the chops briefly, serve with chimichurri spooned over.",
+    ],
+    ingredients: [
+      { name: "lamb chops", quantity: "6" },
+      { name: "flat leaf parsley", quantity: "1 bunch" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "red wine vinegar", quantity: "2 tbsp" },
+    ],
+  },
+  {
+    name: "Kleftiko",
+    description: "Greek slow-roasted lamb with lemon, garlic and oregano.",
+    primaryProtein: "lamb",
+    isClassic: false,
+    costTwoPerson: 10.2,
+    instructions: [
+      "Marinate a lamb shoulder joint in lemon juice, garlic and oregano.",
+      "Wrap tightly in foil with potatoes and roast low and slow for 3-4 hours.",
+      "Unwrap for the final 20 minutes to brown, then serve.",
+    ],
+    ingredients: [
+      { name: "lamb shoulder joint", quantity: "1kg" },
+      { name: "lemon", quantity: "2" },
+      { name: "oregano", quantity: "2 tbsp" },
+      { name: "potatoes", quantity: "600g" },
+    ],
+  },
+
+  // --- New proteins: duck, venison, seafood, plant-based ---
+  {
+    name: "Crispy Duck Pancakes",
+    description: "Shredded crispy duck with pancakes, cucumber and hoisin.",
+    primaryProtein: "duck",
+    isClassic: false,
+    costTwoPerson: 9.5,
+    instructions: [
+      "Rub duck legs with five spice and salt, roast slow until crisp and tender.",
+      "Shred the meat, warm Chinese pancakes.",
+      "Serve with hoisin sauce, cucumber and spring onion to build your own wraps.",
+    ],
+    ingredients: [
+      { name: "duck legs", quantity: "4" },
+      { name: "chinese pancakes", quantity: "12" },
+      { name: "hoisin sauce", quantity: "4 tbsp" },
+      { name: "cucumber", quantity: "1" },
+    ],
+  },
+  {
+    name: "Duck a l'Orange",
+    description: "Pan-seared duck breast with a glossy orange sauce.",
+    primaryProtein: "duck",
+    isClassic: false,
+    costTwoPerson: 11.5,
+    instructions: [
+      "Score duck breast skin, sear skin-side down until crisp, finish in the oven.",
+      "Make a sauce with orange juice, zest, stock and a touch of sugar.",
+      "Rest and slice the duck, serve with the sauce.",
+    ],
+    ingredients: [
+      { name: "duck breasts", quantity: "2" },
+      { name: "oranges", quantity: "2" },
+      { name: "chicken stock", quantity: "200ml" },
+      { name: "potatoes", quantity: "400g" },
+    ],
+  },
+  {
+    name: "Venison Stew",
+    description: "Rich, gamey venison braised with root vegetables and red wine.",
+    primaryProtein: "venison",
+    isClassic: false,
+    costTwoPerson: 10.8,
+    instructions: [
+      "Brown diced venison shoulder in batches, set aside.",
+      "Fry onion, carrot and celery, add red wine, stock and juniper berries.",
+      "Return venison, cover and simmer 2 hours until tender.",
+    ],
+    ingredients: [
+      { name: "diced venison shoulder", quantity: "500g" },
+      { name: "red wine", quantity: "300ml" },
+      { name: "carrots", quantity: "3" },
+      { name: "juniper berries", quantity: "6" },
+    ],
+  },
+  {
+    name: "Seafood Paella",
+    description: "Saffron rice with prawns, mussels and chorizo.",
+    primaryProtein: "seafood",
+    isClassic: false,
+    costTwoPerson: 10.9,
+    instructions: [
+      "Fry chorizo and onion in a wide pan, add rice and saffron-infused stock.",
+      "Simmer without stirring, nestling in mussels and prawns for the last 10 minutes.",
+      "Rest briefly, then serve with lemon wedges.",
+    ],
+    ingredients: [
+      { name: "paella rice", quantity: "300g" },
+      { name: "king prawns", quantity: "200g" },
+      { name: "mussels", quantity: "300g" },
+      { name: "chorizo", quantity: "100g" },
+    ],
+  },
+  {
+    name: "Fish Tacos",
+    description: "Crispy battered fish tacos with a zingy slaw.",
+    primaryProtein: "fish",
+    isClassic: false,
+    costTwoPerson: 6.6,
+    instructions: [
+      "Coat fish goujons in seasoned flour and fry until crisp.",
+      "Toss shredded cabbage and carrot with lime juice and a little mayo for slaw.",
+      "Fill warm tortillas with fish, slaw and hot sauce.",
+    ],
+    ingredients: [
+      { name: "white fish fillets", quantity: "400g" },
+      { name: "tortillas", quantity: "8" },
+      { name: "red cabbage", quantity: "200g" },
+      { name: "lime", quantity: "2" },
+    ],
+  },
+  {
+    name: "Miso Black Cod",
+    description: "Sweet miso-marinated cod, grilled until caramelised.",
+    primaryProtein: "fish",
+    isClassic: false,
+    costTwoPerson: 12.0,
+    instructions: [
+      "Marinate cod fillets in white miso, mirin, sake and sugar for at least 2 hours.",
+      "Grill or broil until caramelised and just cooked through.",
+      "Serve with steamed rice and pak choi.",
+    ],
+    ingredients: [
+      { name: "cod fillets", quantity: "2" },
+      { name: "white miso paste", quantity: "3 tbsp" },
+      { name: "mirin", quantity: "2 tbsp" },
+      { name: "pak choi", quantity: "2" },
+    ],
+  },
+  {
+    name: "Garlic Butter Scallops",
+    description: "Pan-seared scallops in a garlic and herb butter sauce.",
+    primaryProtein: "seafood",
+    isClassic: false,
+    costTwoPerson: 13.5,
+    instructions: [
+      "Pat scallops dry and sear in a very hot pan, 90 seconds per side.",
+      "Add butter, garlic and parsley to the pan, baste the scallops.",
+      "Serve over pea puree or with crusty bread.",
+    ],
+    ingredients: [
+      { name: "scallops", quantity: "12" },
+      { name: "butter", quantity: "60g" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "frozen peas", quantity: "200g" },
+    ],
+  },
+  {
+    name: "Paneer Tikka Masala",
+    description: "Charred paneer in a creamy spiced tomato sauce.",
+    primaryProtein: "paneer",
+    isClassic: false,
+    costTwoPerson: 5.4,
+    instructions: [
+      "Marinate cubed paneer in yoghurt and tikka spices, grill until charred.",
+      "Make a sauce with onion, garlic, tomatoes and cream.",
+      "Combine paneer with sauce, simmer briefly, serve with rice or naan.",
+    ],
+    ingredients: [
+      { name: "paneer", quantity: "225g" },
+      { name: "chopped tomatoes", quantity: "1 tin" },
+      { name: "double cream", quantity: "100ml" },
+      { name: "naan bread", quantity: "2" },
+    ],
+  },
+  {
+    name: "Jackfruit Curry",
+    description: "Young jackfruit simmered in a warming coconut curry sauce.",
+    primaryProtein: "jackfruit",
+    isClassic: false,
+    costTwoPerson: 4.5,
+    instructions: [
+      "Fry onion, garlic, ginger and curry spices until fragrant.",
+      "Add tinned jackfruit and coconut milk, simmer 20 minutes, shredding the jackfruit as it softens.",
+      "Serve with rice and coriander.",
+    ],
+    ingredients: [
+      { name: "tinned jackfruit", quantity: "2 tins" },
+      { name: "coconut milk", quantity: "400ml" },
+      { name: "curry powder", quantity: "2 tbsp" },
+      { name: "rice", quantity: "300g" },
+    ],
+  },
+  {
+    name: "Falafel Bowl",
+    description: "Crispy falafel with hummus, salad and warm flatbread.",
+    primaryProtein: "chickpeas",
+    isClassic: false,
+    costTwoPerson: 4.8,
+    instructions: [
+      "Blend chickpeas, herbs, garlic and spices, shape into falafel and fry until crisp.",
+      "Assemble bowls with hummus, salad, pickles and falafel.",
+      "Serve with warm flatbread and a drizzle of tahini.",
+    ],
+    ingredients: [
+      { name: "chickpeas", quantity: "2 tins" },
+      { name: "hummus", quantity: "200g" },
+      { name: "flatbreads", quantity: "4" },
+      { name: "tahini", quantity: "2 tbsp" },
+    ],
+  },
+  {
+    name: "Aubergine Parmigiana",
+    description: "Layered fried aubergine, tomato sauce and melted cheese.",
+    primaryProtein: "aubergine",
+    isClassic: false,
+    costTwoPerson: 5.0,
+    instructions: [
+      "Fry sliced aubergine until golden.",
+      "Layer with tomato sauce, mozzarella and parmesan in a dish.",
+      "Bake at 190C for 25 minutes until bubbling and golden.",
+    ],
+    ingredients: [
+      { name: "aubergines", quantity: "2" },
+      { name: "tomato passata", quantity: "400ml" },
+      { name: "mozzarella", quantity: "150g" },
+      { name: "parmesan", quantity: "50g" },
+    ],
+  },
+  {
+    name: "Sri Lankan Dhal",
+    description: "Coconut red lentil dhal with warming curry spices.",
+    primaryProtein: "lentils",
+    isClassic: false,
+    costTwoPerson: 3.3,
+    instructions: [
+      "Fry onion, garlic, ginger, mustard seeds and curry leaves.",
+      "Add red lentils, coconut milk and water, simmer 20 minutes until creamy.",
+      "Season and serve with rice or flatbread.",
+    ],
+    ingredients: [
+      { name: "red lentils", quantity: "250g" },
+      { name: "coconut milk", quantity: "400ml" },
+      { name: "curry leaves", quantity: "10" },
+      { name: "mustard seeds", quantity: "1 tsp" },
+    ],
+  },
 ];
 
 async function seed() {
+  let insertedCount = 0;
+  let skippedCount = 0;
+
   for (const m of DEMO_MEALS) {
+    // Idempotent: safe to re-run after adding new dishes without touching
+    // existing meals (or a user's already-approved queue / feedback).
+    const existing = await db.query.meals.findFirst({ where: eq(meals.name, m.name) });
+    if (existing) {
+      skippedCount++;
+      continue;
+    }
+
     const tier = tierForCost(m.costTwoPerson);
     const [inserted] = await db
       .insert(meals)
@@ -968,8 +1656,9 @@ async function seed() {
         quantity: i.quantity,
       }))
     );
+    insertedCount++;
   }
-  console.log(`Seeded ${DEMO_MEALS.length} demo meals.`);
+  console.log(`Seeded ${insertedCount} new demo meals (${skippedCount} already existed, skipped).`);
   process.exit(0);
 }
 

@@ -3,7 +3,7 @@ import { db } from "./db/client";
 import { approvedQueue, meals, mealHistory } from "./db/schema";
 import { addDaysToDateString, isLondonWeekend, londonDateString, londonDayOfWeek } from "./date";
 import { getCurrentTemperatureC } from "./weather/weather";
-import { scoreMealForTonight } from "./ml/model";
+import { scoreMealsForTonight } from "./ml/model";
 import { consumePantryForMeal } from "./pantry/pantry";
 
 const REPEAT_WINDOW_DAYS = 60;
@@ -117,17 +117,17 @@ async function pickFromPool(
     temperatureC: await getCurrentTemperatureC(),
   };
 
-  const scored = await Promise.all(
-    pool.map(async (meal) => ({ meal, score: await scoreMealForTonight(meal, ctx) }))
-  );
-
-  if (scored.some((s) => s.score === null)) {
+  const scores = await scoreMealsForTonight(pool, ctx);
+  if (scores === null) {
     // No trained model yet.
     return { chosen: pool[Math.floor(Math.random() * pool.length)], usedModel: false };
   }
 
-  const best = scored.reduce((a, b) => ((b.score as number) > (a.score as number) ? b : a));
-  return { chosen: best.meal, usedModel: true };
+  let bestIndex = 0;
+  for (let i = 1; i < scores.length; i++) {
+    if (scores[i] > scores[bestIndex]) bestIndex = i;
+  }
+  return { chosen: pool[bestIndex], usedModel: true };
 }
 
 function dedupeById(list: MealRecord[]): MealRecord[] {

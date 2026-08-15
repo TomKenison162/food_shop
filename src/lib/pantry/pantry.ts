@@ -1,4 +1,4 @@
-import { eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import { pantryItems, mealIngredients } from "../db/schema";
 import type { PricedIngredient } from "../pricing/adapter";
@@ -93,7 +93,7 @@ export async function pantryOverlapGrams(mealId: number): Promise<number> {
   const rows = await db
     .select()
     .from(pantryItems)
-    .where(sql`${pantryItems.genericName} = ANY(${names}) and ${pantryItems.gramsRemaining} > 0`);
+    .where(and(inArray(pantryItems.genericName, names), gt(pantryItems.gramsRemaining, "0")));
 
   return rows.reduce((sum, r) => sum + Number(r.gramsRemaining), 0);
 }

@@ -8,7 +8,6 @@ import {
   timestamp,
   varchar,
   pgEnum,
-  jsonb,
 } from "drizzle-orm/pg-core";
 
 export const tierEnum = pgEnum("tier", ["budget", "standard", "gourmet"]);
@@ -113,16 +112,16 @@ export const pantryItems = pgTable("pantry_items", {
 });
 
 /**
- * Latest trained logistic regression weights for ranking rotation
- * candidates. A single row (id=1), overwritten on each retrain — see
- * src/lib/ml/model.ts. Not an LLM: plain gradient-descent logistic
- * regression over contextual + meal features.
+ * Latest trained XGBoost model (gradient-boosted trees, @wlearn/xgboost —
+ * WASM, not an LLM) for ranking rotation candidates. A single row,
+ * replaced wholesale on each retrain — see src/lib/ml/model.ts. Serialized
+ * model bytes are stored base64-encoded (Postgres numeric/jsonb aren't a
+ * good fit for an opaque binary blob).
  */
 export const mlModel = pgTable("ml_model", {
   id: serial("id").primaryKey(),
   featureNames: text("feature_names").array().notNull(),
-  weights: jsonb("weights").notNull().$type<number[]>(),
-  bias: numeric("bias", { precision: 12, scale: 8 }).notNull(),
+  modelDataBase64: text("model_data_base64").notNull(),
   sampleCount: integer("sample_count").notNull(),
   trainedAt: timestamp("trained_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -1,8 +1,8 @@
 import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { dailyFeedback, meals, mlModel, mealHistory } from "../db/schema";
-import { buildFeatureVector, FEATURE_NAMES, type FeatureContext } from "./features";
-import { train, predict, type TrainedModel } from "./logisticRegression";
+import { dailyFeedback, meals, mealIngredients, mlModel, mealHistory } from "../db/schema";
+import { buildFeatureVector, FEATURE_NAMES, type FeatureContext, type MealFeatureExtras } from "./features";
+import { trainXGBoost, scoreWithXGBoost } from "./xgboostModel";
 import { pantryOverlapGrams } from "../pantry/pantry";
 import type { MealRecord } from "../rotation";
 import { londonDateString } from "../date";
@@ -45,29 +45,41 @@ export async function trainModel(): Promise<TrainResult> {
     // Approximation: pantry/recency features use *current* state rather than
     // a historical snapshot at feedback time — acceptable for a small,
     // personal, frequently-retrained model, but noted as a simplification.
-    const overlap = await pantryOverlapGrams(row.meal.id);
-    const daysSince = await daysSinceLastServed(row.meal.id, row.feedback.date);
-
+    const extras = await buildExtras(row.meal, row.feedback.date);
     const ctx: FeatureContext = {
       dayOfWeek: row.feedback.dayOfWeek,
       isWeekend: row.feedback.isWeekend,
       temperatureC: row.feedback.temperatureC !== null ? Number(row.feedback.temperatureC) : null,
     };
-    X.push(buildFeatureVector(ctx, row.meal, { pantryOverlapGrams: overlap, daysSinceLastServed: daysSince }));
+    X.push(buildFeatureVector(ctx, row.meal, extras));
     y.push(row.feedback.accepted ? 1 : 0);
   }
 
-  const model = train(X, y);
+  const modelBuffer = await trainXGBoost(X, y);
 
   await db.delete(mlModel);
   await db.insert(mlModel).values({
     featureNames: FEATURE_NAMES,
-    weights: model.weights,
-    bias: String(model.bias),
+    modelDataBase64: Buffer.from(modelBuffer).toString("base64"),
     sampleCount: rows.length,
   });
 
   return { trained: true, sampleCount: rows.length };
+}
+
+async function buildExtras(meal: MealRecord, asOfDate: string): Promise<MealFeatureExtras> {
+  const [overlap, daysSince, proteinDaysSince, ingredients] = await Promise.all([
+    pantryOverlapGrams(meal.id),
+    daysSinceLastServed(meal.id, asOfDate),
+    proteinDaysSinceLastServed(meal.primaryProtein, asOfDate),
+    db.query.mealIngredients.findMany({ where: eq(mealIngredients.mealId, meal.id) }),
+  ]);
+  return {
+    pantryOverlapGrams: overlap,
+    daysSinceLastServed: daysSince,
+    proteinDaysSinceLastServed: proteinDaysSince,
+    ingredientsCount: ingredients.length,
+  };
 }
 
 async function daysSinceLastServed(mealId: number, asOfDate: string): Promise<number | null> {
@@ -75,30 +87,45 @@ async function daysSinceLastServed(mealId: number, asOfDate: string): Promise<nu
   const before = prior.filter((h) => h.servedDate < asOfDate);
   if (before.length === 0) return null;
   const mostRecent = before.reduce((a, b) => (a.servedDate > b.servedDate ? a : b));
-  const days = (Date.parse(asOfDate) - Date.parse(mostRecent.servedDate)) / (1000 * 60 * 60 * 24);
-  return Math.round(days);
+  return daysBetween(mostRecent.servedDate, asOfDate);
 }
 
-export async function getLatestModel(): Promise<TrainedModel | null> {
+async function proteinDaysSinceLastServed(protein: string, asOfDate: string): Promise<number | null> {
+  const rows = await db
+    .select({ servedDate: mealHistory.servedDate })
+    .from(mealHistory)
+    .where(eq(mealHistory.primaryProtein, protein));
+  const before = rows.filter((h) => h.servedDate < asOfDate);
+  if (before.length === 0) return null;
+  const mostRecent = before.reduce((a, b) => (a.servedDate > b.servedDate ? a : b));
+  return daysBetween(mostRecent.servedDate, asOfDate);
+}
+
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(to) - Date.parse(from)) / (1000 * 60 * 60 * 24));
+}
+
+async function getLatestModelBuffer(): Promise<Uint8Array | null> {
   const row = await db.query.mlModel.findFirst({ orderBy: desc(mlModel.trainedAt) });
   if (!row) return null;
-  return { weights: row.weights, bias: Number(row.bias) };
+  return new Uint8Array(Buffer.from(row.modelDataBase64, "base64"));
 }
 
 /**
- * Scores how likely tonight's context suggests accepting `meal`, using the
- * latest trained model. Returns null if no model has been trained yet —
- * callers should fall back to their existing (e.g. random) selection.
+ * Scores a batch of candidate meals for tonight's context in one model
+ * load (avoids reloading the WASM model per candidate). Returns null if no
+ * model has been trained yet — callers should fall back to e.g. random pick.
  */
-export async function scoreMealForTonight(
-  meal: MealRecord,
+export async function scoreMealsForTonight(
+  candidates: MealRecord[],
   ctx: FeatureContext
-): Promise<number | null> {
-  const model = await getLatestModel();
-  if (!model) return null;
+): Promise<number[] | null> {
+  const modelBuffer = await getLatestModelBuffer();
+  if (!modelBuffer) return null;
 
-  const overlap = await pantryOverlapGrams(meal.id);
-  const daysSince = await daysSinceLastServed(meal.id, londonDateString());
-  const x = buildFeatureVector(ctx, meal, { pantryOverlapGrams: overlap, daysSinceLastServed: daysSince });
-  return predict(model, x);
+  const today = londonDateString();
+  const X = await Promise.all(
+    candidates.map(async (meal) => buildFeatureVector(ctx, meal, await buildExtras(meal, today)))
+  );
+  return scoreWithXGBoost(modelBuffer, X);
 }

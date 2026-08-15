@@ -10,7 +10,11 @@ export interface FeatureContext {
 
 export interface MealFeatureExtras {
   pantryOverlapGrams: number;
-  daysSinceLastServed: number | null; // null = never served before
+  /** Recency of this exact meal. null = never served before. */
+  daysSinceLastServed: number | null;
+  /** Recency of *any* meal sharing this protein — broader than daysSinceLastServed, supports protein-variety reasoning beyond the hard yesterday-exclusion rule. null = never served. */
+  proteinDaysSinceLastServed: number | null;
+  ingredientsCount: number;
 }
 
 export const FEATURE_NAMES: string[] = [
@@ -24,6 +28,10 @@ export const FEATURE_NAMES: string[] = [
   ...PROTEIN_BUCKETS.map((p) => `protein_${p}`),
   "pantryOverlap",
   "daysSinceLastServed",
+  "proteinDaysSinceLastServed",
+  "instructionsCount",
+  "ingredientsCount",
+  "isClassic",
 ];
 
 function proteinBucket(primaryProtein: string): (typeof PROTEIN_BUCKETS)[number] {
@@ -48,7 +56,7 @@ export function buildFeatureVector(
   const angle = (ctx.dayOfWeek / 7) * 2 * Math.PI;
   const bucket = proteinBucket(meal.primaryProtein);
 
-  const features = [
+  return [
     Math.sin(angle),
     Math.cos(angle),
     ctx.isWeekend ? 1 : 0,
@@ -59,7 +67,11 @@ export function buildFeatureVector(
     ...PROTEIN_BUCKETS.map((p) => (p === bucket ? 1 : 0)),
     Math.min(extras.pantryOverlapGrams / 500, 1),
     extras.daysSinceLastServed === null ? 1 : Math.min(extras.daysSinceLastServed / 60, 1),
+    extras.proteinDaysSinceLastServed === null
+      ? 1
+      : Math.min(extras.proteinDaysSinceLastServed / 14, 1),
+    Math.min(meal.instructions.length / 10, 1),
+    Math.min(extras.ingredientsCount / 10, 1),
+    meal.isClassic ? 1 : 0,
   ];
-
-  return features;
 }

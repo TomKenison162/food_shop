@@ -12,11 +12,11 @@ const withPWA = require("@ducanh2912/next-pwa").default({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // PGlite (local-dev-only WASM Postgres) resolves its wasm/data assets via
+  // @wlearn/xgboost (WASM XGBoost) resolves its wasm asset via
   // import.meta.url at runtime; webpack's bundling breaks that. Keep it
   // external so Node loads it natively instead.
   experimental: {
-    serverComponentsExternalPackages: ["@electric-sql/pglite"],
+    serverComponentsExternalPackages: ["@wlearn/xgboost", "@wlearn/core"],
   },
 };
 
