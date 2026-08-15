@@ -1,18 +1,27 @@
-import { desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { db } from "../db/client";
-import { meals, mealIngredients, mlModel, mealHistory } from "../db/schema";
+import { meals, mealIngredients, mlModel, mealHistory, pantryItems } from "../db/schema";
 import { buildFeatureVector, FEATURE_NAMES, type FeatureContext, type MealFeatureExtras } from "./features";
 import { trainXGBoost, scoreWithXGBoost } from "./xgboostModel";
-import { pantryOverlapGrams } from "../pantry/pantry";
+import { leaveOneOutEvaluate } from "./evaluate";
 import type { MealRecord } from "../rotationDecision";
 import { londonDateString } from "../date";
 
-const MIN_SAMPLES_PER_CLASS = 3;
+/**
+ * Below this the model can't discriminate: measured on this feature set,
+ * ~10 labelled days produced only 7 distinct scores across 51 candidate
+ * meals, five of them tied. Waiting for more data costs nothing — the rules
+ * (protein rotation, anti-repetition, budget) still choose sensibly on
+ * their own, with a random pick among the survivors.
+ */
+const MIN_SAMPLES_PER_CLASS = 5;
 
 export interface TrainResult {
   trained: boolean;
   reason?: string;
   sampleCount?: number;
+  accuracy?: number;
+  baselineAccuracy?: number;
 }
 
 /**
@@ -65,6 +74,24 @@ export async function trainModel(): Promise<TrainResult> {
     y.push(history.accepted ? 1 : 0);
   }
 
+  // Only ship a model that demonstrably beats guessing the majority class.
+  // Storing one that doesn't would make selection *worse* than the random
+  // fallback: it adds confident noise on top of rules that already work.
+  const evaluation = await leaveOneOutEvaluate(X, y);
+  if (!evaluation.beatsBaseline) {
+    await db.delete(mlModel);
+    return {
+      trained: false,
+      reason:
+        `Model scored ${(evaluation.accuracy * 100).toFixed(0)}% vs a ` +
+        `${(evaluation.baselineAccuracy * 100).toFixed(0)}% majority-class baseline — ` +
+        `not better than guessing, so it's not being used yet.`,
+      sampleCount: rows.length,
+      accuracy: evaluation.accuracy,
+      baselineAccuracy: evaluation.baselineAccuracy,
+    };
+  }
+
   const modelBuffer = await trainXGBoost(X, y);
 
   await db.delete(mlModel);
@@ -72,9 +99,16 @@ export async function trainModel(): Promise<TrainResult> {
     featureNames: FEATURE_NAMES,
     modelDataBase64: Buffer.from(modelBuffer).toString("base64"),
     sampleCount: rows.length,
+    accuracy: String(evaluation.accuracy),
+    baselineAccuracy: String(evaluation.baselineAccuracy),
   });
 
-  return { trained: true, sampleCount: rows.length };
+  return {
+    trained: true,
+    sampleCount: rows.length,
+    accuracy: evaluation.accuracy,
+    baselineAccuracy: evaluation.baselineAccuracy,
+  };
 }
 
 async function getLatestModelBuffer(): Promise<Uint8Array | null> {
@@ -84,40 +118,73 @@ async function getLatestModelBuffer(): Promise<Uint8Array | null> {
 }
 
 /**
- * Scores candidate meals for tonight's context in one model load (avoids
- * reloading the WASM model per candidate). Returns null if no model has
- * been trained yet — callers fall back to a random pick.
+ * Scores candidate meals for tonight's context.
+ *
+ * All the per-meal feature inputs are fetched in a handful of grouped
+ * queries rather than per candidate: the previous shape ran four queries
+ * for each of ~50 approved meals, so every single dinner selection cost
+ * roughly 200 round trips.
+ *
+ * Returns null when no model is stored — either never trained, or trained
+ * and rejected for not beating the baseline — and callers fall back to a
+ * random pick among the rule-filtered survivors.
  */
 export async function scoreMealsForTonight(
   candidates: MealRecord[],
   ctx: FeatureContext
 ): Promise<number[] | null> {
   const modelBuffer = await getLatestModelBuffer();
-  if (!modelBuffer) return null;
+  if (!modelBuffer || candidates.length === 0) return null;
 
   const today = londonDateString();
-  // Imported lazily to avoid a circular import: rotation.ts imports this
-  // module for scoring, and these helpers live alongside the persistence
-  // logic there.
-  const { daysSinceLastServed, proteinDaysSinceLastServed } = await import("../rotation");
+  const mealIds = candidates.map((m) => m.id);
 
-  const X: number[][] = [];
-  for (const meal of candidates) {
-    const [overlap, ingredients, lastServed, proteinLastServed] = await Promise.all([
-      pantryOverlapGrams(meal.id),
-      db.query.mealIngredients.findMany({ where: eq(mealIngredients.mealId, meal.id) }),
-      daysSinceLastServed(meal.id, today),
-      proteinDaysSinceLastServed(meal.primaryProtein, today),
-    ]);
-    X.push(
-      buildFeatureVector(ctx, meal, {
-        pantryOverlapGrams: overlap,
-        daysSinceLastServed: lastServed,
-        proteinDaysSinceLastServed: proteinLastServed,
-        ingredientsCount: ingredients.length,
+  const [pantry, ingredientRows, historyRows] = await Promise.all([
+    db.select().from(pantryItems).where(gt(pantryItems.gramsRemaining, "0")),
+    db.select().from(mealIngredients).where(inArray(mealIngredients.mealId, mealIds)),
+    db
+      .select({
+        mealId: mealHistory.mealId,
+        primaryProtein: mealHistory.primaryProtein,
+        servedDate: mealHistory.servedDate,
       })
-    );
+      .from(mealHistory)
+      .where(and(lt(mealHistory.servedDate, today), isNull(mealHistory.supersededAt))),
+  ]);
+
+  const pantryByName = new Map(pantry.map((p) => [p.genericName, Number(p.gramsRemaining)]));
+
+  const ingredientsByMeal = new Map<number, string[]>();
+  for (const row of ingredientRows) {
+    const list = ingredientsByMeal.get(row.mealId) ?? [];
+    list.push(row.genericName);
+    ingredientsByMeal.set(row.mealId, list);
   }
+
+  const lastServedByMeal = new Map<number, string>();
+  const lastServedByProtein = new Map<string, string>();
+  for (const h of historyRows) {
+    const m = lastServedByMeal.get(h.mealId);
+    if (!m || h.servedDate > m) lastServedByMeal.set(h.mealId, h.servedDate);
+    const p = lastServedByProtein.get(h.primaryProtein);
+    if (!p || h.servedDate > p) lastServedByProtein.set(h.primaryProtein, h.servedDate);
+  }
+
+  const gapDays = (from: string | undefined): number | null =>
+    from === undefined
+      ? null
+      : Math.round((Date.parse(today) - Date.parse(from)) / (1000 * 60 * 60 * 24));
+
+  const X = candidates.map((meal) => {
+    const names = ingredientsByMeal.get(meal.id) ?? [];
+    const overlap = names.reduce((sum, n) => sum + (pantryByName.get(n) ?? 0), 0);
+    return buildFeatureVector(ctx, meal, {
+      pantryOverlapGrams: overlap,
+      daysSinceLastServed: gapDays(lastServedByMeal.get(meal.id)),
+      proteinDaysSinceLastServed: gapDays(lastServedByProtein.get(meal.primaryProtein)),
+      ingredientsCount: names.length,
+    });
+  });
 
   return scoreWithXGBoost(modelBuffer, X);
 }

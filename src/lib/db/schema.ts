@@ -197,4 +197,7 @@ export const mlModel = pgTable("ml_model", {
   modelDataBase64: text("model_data_base64").notNull(),
   sampleCount: integer("sample_count").notNull(),
   trainedAt: timestamp("trained_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Leave-one-out accuracy, and the majority-class rate it had to beat. */
+  accuracy: numeric("accuracy", { precision: 5, scale: 4 }),
+  baselineAccuracy: numeric("baseline_accuracy", { precision: 5, scale: 4 }),
 });
