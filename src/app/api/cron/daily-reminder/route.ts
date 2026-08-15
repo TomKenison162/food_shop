@@ -12,6 +12,10 @@ export const dynamic = "force-dynamic";
  * and BST — checking the Europe/London wall-clock hour here means the
  * reminder still fires at 5pm local time year-round without needing to
  * hand-adjust the cron expression for daylight saving.
+ *
+ * Locally, scripts/local-cron.ts polls this route every 5 minutes rather
+ * than hourly — the `alreadySelectedToday` check below is what stops that
+ * from re-sending the email on every poll within the 17:00 hour.
  */
 export async function GET(req: NextRequest) {
   if (!isAuthorizedCronRequest(req)) {
@@ -27,7 +31,10 @@ export async function GET(req: NextRequest) {
   if (!result) {
     return NextResponse.json({ sent: false, reason: "Approved queue is empty." });
   }
+  if (result.alreadySelectedToday) {
+    return NextResponse.json({ skipped: true, reason: "Already emailed today.", meal: result.meal.name });
+  }
 
-  const emailResult = await sendDinnerReminder(result.meal);
+  const emailResult = await sendDinnerReminder(result);
   return NextResponse.json({ meal: result.meal.name, ...emailResult });
 }

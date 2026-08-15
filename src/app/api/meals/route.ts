@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { meals, approvedQueue, rejectedMeals } from "@/lib/db/schema";
+import { meals, approvedQueue } from "@/lib/db/schema";
 
 /**
- * Swipe-deck feed: excludes meals already approved or rejected. Meals are
+ * Swipe-deck feed: excludes already-approved meals. Rejected meals are hard-
+ * deleted on swipe-left (see /api/meals/[id]/reject), so there's nothing to
+ * exclude for those — they're just gone from `meals` entirely. Meals are
  * swipeable before they're priced (cost/tier come from a manually-triggered
  * pricing step on the *approved* queue, not from generation) — so the tier
  * filter only narrows to meals that already have a tier; it never hides
@@ -15,14 +17,12 @@ import { meals, approvedQueue, rejectedMeals } from "@/lib/db/schema";
 export async function GET(req: NextRequest) {
   const tier = req.nextUrl.searchParams.get("tier"); // "budget" | "standard" | "gourmet" | null
 
-  const decidedIds = await Promise.all([
-    db.select({ id: approvedQueue.mealId }).from(approvedQueue),
-    db.select({ id: rejectedMeals.mealId }).from(rejectedMeals),
-  ]);
-  const excluded = [...decidedIds[0], ...decidedIds[1]].map((r) => r.id);
+  const approvedIds = (await db.select({ id: approvedQueue.mealId }).from(approvedQueue)).map(
+    (r) => r.id
+  );
 
   const conditions = [];
-  if (excluded.length > 0) conditions.push(notInArray(meals.id, excluded));
+  if (approvedIds.length > 0) conditions.push(notInArray(meals.id, approvedIds));
   if (tier === "budget" || tier === "standard" || tier === "gourmet") {
     conditions.push(eq(meals.tier, tier));
   }

@@ -1,8 +1,7 @@
 import "dotenv/config";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "../src/lib/db/client";
 import { meals, mealIngredients } from "../src/lib/db/schema";
-import { tierForCost } from "../src/lib/tiering";
 
 /**
  * Local-dev-only seed data: hand-authored (not LLM-generated, not priced via
@@ -43,6 +42,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "onion", quantity: "1" },
       { name: "garlic", quantity: "2 cloves" },
+      { name: "carrot", quantity: "1" },
+      { name: "celery", quantity: "2 sticks" },
+      { name: "beef stock", quantity: "150ml" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "parmesan", quantity: "40g" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -62,6 +67,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "ale", quantity: "330ml" },
       { name: "carrots", quantity: "3" },
       { name: "onion", quantity: "1" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "plain flour", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -81,6 +89,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "potatoes", quantity: "600g" },
       { name: "double cream", quantity: "100ml" },
       { name: "green peppercorns", quantity: "1 tbsp" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -99,6 +109,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "taco shells", quantity: "8" },
       { name: "cheddar cheese", quantity: "100g" },
       { name: "salsa", quantity: "200g" },
+      { name: "taco seasoning", quantity: "1 packet" },
+      { name: "lettuce", quantity: "0.5 head" },
+      { name: "soured cream", quantity: "100g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -117,6 +131,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "potatoes", quantity: "700g" },
       { name: "beef stock", quantity: "300ml" },
       { name: "carrots", quantity: "2" },
+      { name: "onion", quantity: "1" },
+      { name: "butter", quantity: "40g" },
+      { name: "milk", quantity: "50ml" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -135,6 +154,7 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "mixed stir fry vegetables", quantity: "300g" },
       { name: "noodles", quantity: "250g" },
       { name: "soy sauce", quantity: "3 tbsp" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
     ],
   },
   {
@@ -154,6 +174,13 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "lasagne sheets", quantity: "9" },
       { name: "milk", quantity: "500ml" },
       { name: "cheddar cheese", quantity: "150g" },
+      { name: "chopped tomatoes", quantity: "1 tin" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "butter", quantity: "50g" },
+      { name: "plain flour", quantity: "50g" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -172,6 +199,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "kidney beans", quantity: "1 tin" },
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "rice", quantity: "300g" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "chilli powder", quantity: "2 tsp" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -190,6 +223,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "coconut milk", quantity: "400ml" },
       { name: "massaman curry paste", quantity: "3 tbsp" },
       { name: "potatoes", quantity: "300g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "rice", quantity: "300g" },
+      { name: "salt", quantity: "to taste" },
     ],
   },
   {
@@ -208,6 +244,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "brioche buns", quantity: "2" },
       { name: "cheddar cheese", quantity: "2 slices" },
       { name: "lettuce", quantity: "4 leaves" },
+      { name: "burger sauce", quantity: "2 tbsp" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -226,6 +265,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "puff pastry", quantity: "500g" },
       { name: "mushrooms", quantity: "300g" },
       { name: "parma ham", quantity: "6 slices" },
+      { name: "egg", quantity: "1" },
+      { name: "dijon mustard", quantity: "1 tbsp" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -244,6 +287,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "broccoli", quantity: "250g" },
       { name: "noodles", quantity: "250g" },
       { name: "soy sauce", quantity: "4 tbsp" },
+      { name: "cornflour", quantity: "1 tbsp" },
+      { name: "ginger", quantity: "20g" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
     ],
   },
 
@@ -266,6 +312,13 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "double cream", quantity: "100ml" },
       { name: "basmati rice", quantity: "300g" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "3 cloves" },
+      { name: "ginger", quantity: "20g" },
+      { name: "tikka masala spice mix", quantity: "2 tbsp" },
+      { name: "naan bread", quantity: "2" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -285,6 +338,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "potatoes", quantity: "1kg" },
       { name: "carrots", quantity: "4" },
       { name: "chicken stock", quantity: "300ml" },
+      { name: "greens", quantity: "300g" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
+      { name: "plain flour", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -303,6 +360,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "mixed peppers", quantity: "3" },
       { name: "tortilla wraps", quantity: "6" },
       { name: "soured cream", quantity: "150g" },
+      { name: "fajita seasoning", quantity: "1 packet" },
+      { name: "guacamole", quantity: "150g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -322,6 +382,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "panko breadcrumbs", quantity: "100g" },
       { name: "curry powder", quantity: "2 tbsp" },
       { name: "rice", quantity: "300g" },
+      { name: "plain flour", quantity: "50g" },
+      { name: "eggs", quantity: "1" },
+      { name: "onion", quantity: "1" },
+      { name: "chicken stock", quantity: "300ml" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
     ],
   },
   {
@@ -340,6 +405,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "potatoes", quantity: "500g" },
       { name: "lemon", quantity: "1" },
       { name: "mixed herbs", quantity: "1 tbsp" },
+      { name: "olive oil", quantity: "3 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -358,6 +425,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "romaine lettuce", quantity: "1" },
       { name: "parmesan", quantity: "50g" },
       { name: "croutons", quantity: "80g" },
+      { name: "caesar dressing", quantity: "80ml" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -376,6 +446,7 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "peri peri sauce", quantity: "100ml" },
       { name: "corn on the cob", quantity: "2" },
       { name: "rice", quantity: "250g" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -394,6 +465,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chicken stock", quantity: "1.2L" },
       { name: "egg noodles", quantity: "150g" },
       { name: "carrots", quantity: "2" },
+      { name: "celery", quantity: "2 sticks" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -412,6 +485,7 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "BBQ sauce", quantity: "200ml" },
       { name: "brioche buns", quantity: "2" },
       { name: "coleslaw", quantity: "150g" },
+      { name: "chicken stock", quantity: "200ml" },
     ],
   },
   {
@@ -430,6 +504,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "cooked rice", quantity: "400g" },
       { name: "frozen peas and carrots", quantity: "150g" },
       { name: "eggs", quantity: "2" },
+      { name: "soy sauce", quantity: "2 tbsp" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -448,6 +525,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "bacon lardons", quantity: "150g" },
       { name: "red wine", quantity: "300ml" },
       { name: "chestnut mushrooms", quantity: "200g" },
+      { name: "shallots", quantity: "150g" },
+      { name: "chicken stock", quantity: "200ml" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -466,6 +548,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "honey", quantity: "3 tbsp" },
       { name: "soy sauce", quantity: "3 tbsp" },
       { name: "garlic", quantity: "3 cloves" },
+      { name: "rice", quantity: "300g" },
+      { name: "greens", quantity: "200g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
 
@@ -486,6 +572,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "potatoes", quantity: "700g" },
       { name: "onion", quantity: "1" },
       { name: "beef stock", quantity: "300ml" },
+      { name: "butter", quantity: "40g" },
+      { name: "milk", quantity: "100ml" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -504,6 +593,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "BBQ sauce", quantity: "200ml" },
       { name: "brioche buns", quantity: "2" },
       { name: "coleslaw", quantity: "150g" },
+      { name: "BBQ spice rub", quantity: "2 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -522,6 +613,7 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "bao buns", quantity: "6" },
       { name: "hoisin sauce", quantity: "4 tbsp" },
       { name: "cucumber", quantity: "1" },
+      { name: "salt", quantity: "1 tsp" },
     ],
   },
   {
@@ -540,6 +632,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "tinned pineapple", quantity: "1 tin" },
       { name: "mixed peppers", quantity: "2" },
       { name: "rice", quantity: "300g" },
+      { name: "cornflour", quantity: "3 tbsp" },
+      { name: "sweet and sour sauce", quantity: "200ml" },
+      { name: "vegetable oil", quantity: "3 tbsp" },
     ],
   },
   {
@@ -558,6 +653,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "plain flour", quantity: "140g" },
       { name: "eggs", quantity: "4" },
       { name: "milk", quantity: "200ml" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
+      { name: "salt", quantity: "1 tsp" },
     ],
   },
   {
@@ -575,6 +672,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "pork chops", quantity: "2" },
       { name: "cooking apples", quantity: "2" },
       { name: "green beans", quantity: "200g" },
+      { name: "sugar", quantity: "1 tbsp" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -593,6 +693,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "butter beans", quantity: "1 tin" },
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -611,6 +713,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "panko breadcrumbs", quantity: "100g" },
       { name: "curry powder", quantity: "2 tbsp" },
       { name: "rice", quantity: "300g" },
+      { name: "plain flour", quantity: "50g" },
+      { name: "eggs", quantity: "1" },
+      { name: "onion", quantity: "1" },
+      { name: "chicken stock", quantity: "300ml" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
     ],
   },
   {
@@ -629,6 +736,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "bacon lardons", quantity: "150g" },
       { name: "eggs", quantity: "3" },
       { name: "parmesan", quantity: "80g" },
+      { name: "black pepper", quantity: "1 tsp" },
+      { name: "salt", quantity: "to taste" },
     ],
   },
   {
@@ -647,6 +756,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "honey", quantity: "2 tbsp" },
       { name: "dijon mustard", quantity: "2 tbsp" },
       { name: "mixed vegetables", quantity: "400g" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
 
@@ -667,6 +778,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "flatbreads", quantity: "4" },
       { name: "natural yoghurt", quantity: "150g" },
       { name: "cucumber", quantity: "1" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "ground coriander", quantity: "1 tsp" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "mixed salad", quantity: "100g" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -685,6 +802,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "potatoes", quantity: "700g" },
       { name: "lamb stock", quantity: "300ml" },
       { name: "carrots", quantity: "2" },
+      { name: "onion", quantity: "1" },
+      { name: "worcestershire sauce", quantity: "1 tbsp" },
+      { name: "butter", quantity: "40g" },
+      { name: "milk", quantity: "100ml" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -703,6 +825,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "rogan josh curry paste", quantity: "3 tbsp" },
       { name: "rice", quantity: "300g" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "ginger", quantity: "20g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt", quantity: "to taste" },
     ],
   },
   {
@@ -721,6 +848,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "garlic", quantity: "1 bulb" },
       { name: "rosemary", quantity: "4 sprigs" },
       { name: "potatoes", quantity: "600g" },
+      { name: "olive oil", quantity: "2 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -739,6 +868,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "curry powder", quantity: "2 tbsp" },
       { name: "rice", quantity: "300g" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -757,6 +891,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "pitta bread", quantity: "4" },
       { name: "tzatziki", quantity: "150g" },
       { name: "lemon", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "oregano", quantity: "1 tbsp" },
+      { name: "olive oil", quantity: "2 tbsp" },
+      { name: "mixed salad", quantity: "100g" },
     ],
   },
   {
@@ -775,6 +913,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "feta cheese", quantity: "80g" },
       { name: "mint", quantity: "1 handful" },
       { name: "burger buns", quantity: "2" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "natural yoghurt", quantity: "100g" },
+      { name: "mixed salad", quantity: "100g" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -793,6 +936,13 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "dried apricots", quantity: "100g" },
       { name: "chickpeas", quantity: "1 tin" },
       { name: "couscous", quantity: "250g" },
+      { name: "onion", quantity: "1" },
+      { name: "lamb stock", quantity: "400ml" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "ground cinnamon", quantity: "1 tsp" },
+      { name: "ground ginger", quantity: "1 tsp" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
 
@@ -814,6 +964,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "bell pepper", quantity: "1" },
       { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "chilli powder", quantity: "1 tbsp" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "rice", quantity: "300g" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -833,6 +989,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "plain flour", quantity: "150g" },
       { name: "beer", quantity: "200ml" },
       { name: "frozen peas", quantity: "200g" },
+      { name: "vegetable oil", quantity: "500ml" },
+      { name: "salt", quantity: "to taste" },
     ],
   },
   {
@@ -851,6 +1009,7 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "teriyaki sauce", quantity: "80ml" },
       { name: "rice", quantity: "250g" },
       { name: "pak choi", quantity: "2" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -869,6 +1028,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "king prawns", quantity: "300g" },
       { name: "garlic", quantity: "3 cloves" },
       { name: "chilli flakes", quantity: "1 tsp" },
+      { name: "butter", quantity: "40g" },
+      { name: "flat leaf parsley", quantity: "1 handful" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -887,6 +1049,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "breadcrumbs", quantity: "50g" },
       { name: "spaghetti", quantity: "250g" },
+      { name: "mixed herbs", quantity: "1 tbsp" },
+      { name: "egg", quantity: "1" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -905,6 +1071,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "mixed stir fry vegetables", quantity: "300g" },
       { name: "noodles", quantity: "250g" },
       { name: "soy sauce", quantity: "3 tbsp" },
+      { name: "ginger", quantity: "20g" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "sesame oil", quantity: "1 tbsp" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
     ],
   },
   {
@@ -923,6 +1093,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "mixed vegetables", quantity: "400g" },
       { name: "couscous", quantity: "200g" },
       { name: "tahini", quantity: "2 tbsp" },
+      { name: "olive oil", quantity: "2 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -941,6 +1113,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chestnut mushrooms", quantity: "300g" },
       { name: "vegetable stock", quantity: "1L" },
       { name: "parmesan", quantity: "60g" },
+      { name: "onion", quantity: "1" },
+      { name: "butter", quantity: "40g" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
 
@@ -961,6 +1137,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "soy sauce", quantity: "4 tbsp" },
       { name: "sesame oil", quantity: "1 tbsp" },
       { name: "rice", quantity: "300g" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "ginger", quantity: "20g" },
+      { name: "apple", quantity: "1" },
+      { name: "eggs", quantity: "2" },
+      { name: "pickled vegetables", quantity: "150g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -979,6 +1161,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "coconut milk", quantity: "400ml" },
       { name: "lemongrass", quantity: "2 stalks" },
       { name: "rice", quantity: "300g" },
+      { name: "shallots", quantity: "100g" },
+      { name: "garlic", quantity: "3 cloves" },
+      { name: "red chilli", quantity: "2" },
+      { name: "galangal", quantity: "20g" },
+      { name: "kaffir lime leaves", quantity: "4" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
     ],
   },
   {
@@ -997,6 +1185,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "beef stock", quantity: "1.2L" },
       { name: "rice noodles", quantity: "250g" },
       { name: "beansprouts", quantity: "150g" },
+      { name: "onion", quantity: "1" },
+      { name: "ginger", quantity: "40g" },
+      { name: "star anise", quantity: "3" },
+      { name: "cinnamon stick", quantity: "1" },
+      { name: "fresh coriander", quantity: "1 handful" },
     ],
   },
   {
@@ -1015,6 +1208,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "red wine", quantity: "400ml" },
       { name: "bacon lardons", quantity: "120g" },
       { name: "pearl onions", quantity: "150g" },
+      { name: "chestnut mushrooms", quantity: "200g" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "beef stock", quantity: "300ml" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1033,6 +1231,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "lime", quantity: "2" },
       { name: "fish sauce", quantity: "2 tbsp" },
       { name: "mixed salad leaves", quantity: "150g" },
+      { name: "sugar", quantity: "1 tbsp" },
+      { name: "red chilli", quantity: "1" },
+      { name: "cucumber", quantity: "0.5" },
+      { name: "red onion", quantity: "0.5" },
+      { name: "fresh mint", quantity: "1 handful" },
+      { name: "fresh coriander", quantity: "1 handful" },
     ],
   },
   {
@@ -1051,6 +1255,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "soy sauce", quantity: "3 tbsp" },
       { name: "mirin", quantity: "2 tbsp" },
       { name: "spring onion", quantity: "4" },
+      { name: "sake", quantity: "2 tbsp" },
+      { name: "sugar", quantity: "1 tbsp" },
+      { name: "rice", quantity: "300g" },
     ],
   },
 
@@ -1071,6 +1278,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "natural yoghurt", quantity: "100g" },
       { name: "flatbreads", quantity: "4" },
       { name: "garlic", quantity: "3 cloves" },
+      { name: "shawarma spice mix", quantity: "2 tbsp" },
+      { name: "lemon", quantity: "1" },
+      { name: "garlic sauce", quantity: "3 tbsp" },
+      { name: "pickles", quantity: "50g" },
+      { name: "mixed salad", quantity: "100g" },
     ],
   },
   {
@@ -1089,6 +1301,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "coconut milk", quantity: "400ml" },
       { name: "green curry paste", quantity: "3 tbsp" },
       { name: "aubergine", quantity: "1" },
+      { name: "thai basil", quantity: "1 handful" },
+      { name: "jasmine rice", quantity: "300g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -1107,6 +1322,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "scotch bonnet", quantity: "1" },
       { name: "allspice", quantity: "2 tsp" },
       { name: "rice and peas", quantity: "300g" },
+      { name: "thyme", quantity: "4 sprigs" },
+      { name: "garlic", quantity: "3 cloves" },
+      { name: "lime", quantity: "1" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -1125,6 +1344,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "soy sauce", quantity: "80ml" },
       { name: "white vinegar", quantity: "60ml" },
       { name: "rice", quantity: "300g" },
+      { name: "garlic", quantity: "4 cloves" },
+      { name: "bay leaves", quantity: "2" },
     ],
   },
   {
@@ -1143,6 +1364,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "tomato passata", quantity: "400ml" },
       { name: "butter", quantity: "60g" },
       { name: "double cream", quantity: "100ml" },
+      { name: "natural yoghurt", quantity: "100g" },
+      { name: "garam masala", quantity: "2 tbsp" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "salt", quantity: "to taste" },
     ],
   },
   {
@@ -1161,6 +1386,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "mozzarella", quantity: "125g" },
       { name: "tomato passata", quantity: "300ml" },
       { name: "breadcrumbs", quantity: "100g" },
+      { name: "plain flour", quantity: "50g" },
+      { name: "eggs", quantity: "1" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
     ],
   },
   {
@@ -1179,6 +1407,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "rice", quantity: "300g" },
       { name: "ginger", quantity: "50g" },
       { name: "cucumber", quantity: "1" },
+      { name: "spring onion", quantity: "4" },
+      { name: "garlic", quantity: "3 cloves" },
+      { name: "chilli-ginger sauce", quantity: "4 tbsp" },
     ],
   },
   {
@@ -1197,6 +1428,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "buttermilk", quantity: "300ml" },
       { name: "cayenne pepper", quantity: "2 tbsp" },
       { name: "white bread", quantity: "4 slices" },
+      { name: "plain flour", quantity: "150g" },
+      { name: "butter", quantity: "60g" },
+      { name: "pickles", quantity: "50g" },
+      { name: "vegetable oil", quantity: "500ml" },
     ],
   },
 
@@ -1217,6 +1452,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "gochujang", quantity: "3 tbsp" },
       { name: "soy sauce", quantity: "2 tbsp" },
       { name: "rice", quantity: "300g" },
+      { name: "garlic", quantity: "3 cloves" },
+      { name: "sugar", quantity: "1 tbsp" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "pickled vegetables", quantity: "100g" },
     ],
   },
   {
@@ -1235,6 +1474,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "hoisin sauce", quantity: "3 tbsp" },
       { name: "honey", quantity: "2 tbsp" },
       { name: "five spice", quantity: "1 tsp" },
+      { name: "rice", quantity: "300g" },
+      { name: "greens", quantity: "200g" },
     ],
   },
   {
@@ -1253,6 +1494,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "garlic", quantity: "1 bulb" },
       { name: "rosemary", quantity: "4 sprigs" },
       { name: "fennel seeds", quantity: "1 tbsp" },
+      { name: "lemon", quantity: "1" },
+      { name: "olive oil", quantity: "2 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1271,6 +1515,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "orange juice", quantity: "200ml" },
       { name: "lime", quantity: "2" },
       { name: "black beans", quantity: "1 tin" },
+      { name: "garlic", quantity: "4 cloves" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "rice", quantity: "300g" },
     ],
   },
   {
@@ -1289,6 +1536,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "ramen noodles", quantity: "250g" },
       { name: "eggs", quantity: "2" },
       { name: "chicken stock", quantity: "1L" },
+      { name: "soy sauce", quantity: "3 tbsp" },
+      { name: "garlic", quantity: "3 cloves" },
+      { name: "ginger", quantity: "20g" },
+      { name: "spring onion", quantity: "3" },
     ],
   },
 
@@ -1309,6 +1560,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "basmati rice", quantity: "350g" },
       { name: "natural yoghurt", quantity: "150g" },
       { name: "fried onions", quantity: "100g" },
+      { name: "biryani spice mix", quantity: "3 tbsp" },
+      { name: "vegetable oil", quantity: "2 tbsp" },
+      { name: "salt", quantity: "to taste" },
     ],
   },
   {
@@ -1327,6 +1581,10 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "flatbreads", quantity: "4" },
       { name: "natural yoghurt", quantity: "100g" },
       { name: "chilli sauce", quantity: "3 tbsp" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "paprika", quantity: "1 tsp" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "mixed salad", quantity: "100g" },
     ],
   },
   {
@@ -1345,6 +1603,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "malt vinegar", quantity: "4 tbsp" },
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "rice", quantity: "300g" },
+      { name: "onion", quantity: "1" },
+      { name: "chilli powder", quantity: "1 tbsp" },
+      { name: "vindaloo spice mix", quantity: "2 tbsp" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "naan bread", quantity: "2" },
     ],
   },
   {
@@ -1363,6 +1626,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "baby carrots", quantity: "200g" },
       { name: "baby potatoes", quantity: "300g" },
       { name: "lamb stock", quantity: "500ml" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "tomato puree", quantity: "2 tbsp" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1381,6 +1649,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "flat leaf parsley", quantity: "1 bunch" },
       { name: "garlic", quantity: "2 cloves" },
       { name: "red wine vinegar", quantity: "2 tbsp" },
+      { name: "red chilli", quantity: "1" },
+      { name: "olive oil", quantity: "4 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1399,6 +1670,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "lemon", quantity: "2" },
       { name: "oregano", quantity: "2 tbsp" },
       { name: "potatoes", quantity: "600g" },
+      { name: "garlic", quantity: "1 bulb" },
+      { name: "olive oil", quantity: "3 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
 
@@ -1419,6 +1693,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chinese pancakes", quantity: "12" },
       { name: "hoisin sauce", quantity: "4 tbsp" },
       { name: "cucumber", quantity: "1" },
+      { name: "spring onion", quantity: "4" },
+      { name: "salt", quantity: "1 tsp" },
     ],
   },
   {
@@ -1437,6 +1713,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "oranges", quantity: "2" },
       { name: "chicken stock", quantity: "200ml" },
       { name: "potatoes", quantity: "400g" },
+      { name: "sugar", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1455,6 +1733,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "red wine", quantity: "300ml" },
       { name: "carrots", quantity: "3" },
       { name: "juniper berries", quantity: "6" },
+      { name: "onion", quantity: "1" },
+      { name: "celery", quantity: "2 sticks" },
+      { name: "beef stock", quantity: "400ml" },
+      { name: "olive oil", quantity: "1 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1473,6 +1756,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "king prawns", quantity: "200g" },
       { name: "mussels", quantity: "300g" },
       { name: "chorizo", quantity: "100g" },
+      { name: "onion", quantity: "1" },
+      { name: "saffron", quantity: "1 pinch" },
+      { name: "chicken stock", quantity: "1L" },
+      { name: "lemon", quantity: "1" },
+      { name: "olive oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -1491,6 +1779,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "tortillas", quantity: "8" },
       { name: "red cabbage", quantity: "200g" },
       { name: "lime", quantity: "2" },
+      { name: "plain flour", quantity: "100g" },
+      { name: "mayonnaise", quantity: "3 tbsp" },
+      { name: "hot sauce", quantity: "2 tbsp" },
+      { name: "vegetable oil", quantity: "300ml" },
+      { name: "carrot", quantity: "1" },
     ],
   },
   {
@@ -1509,6 +1802,9 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "white miso paste", quantity: "3 tbsp" },
       { name: "mirin", quantity: "2 tbsp" },
       { name: "pak choi", quantity: "2" },
+      { name: "sake", quantity: "2 tbsp" },
+      { name: "sugar", quantity: "1 tbsp" },
+      { name: "rice", quantity: "250g" },
     ],
   },
   {
@@ -1527,6 +1823,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "butter", quantity: "60g" },
       { name: "garlic", quantity: "2 cloves" },
       { name: "frozen peas", quantity: "200g" },
+      { name: "flat leaf parsley", quantity: "1 handful" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1545,6 +1843,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "chopped tomatoes", quantity: "1 tin" },
       { name: "double cream", quantity: "100ml" },
       { name: "naan bread", quantity: "2" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "tikka masala spice mix", quantity: "2 tbsp" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "rice", quantity: "300g" },
     ],
   },
   {
@@ -1563,6 +1866,11 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "coconut milk", quantity: "400ml" },
       { name: "curry powder", quantity: "2 tbsp" },
       { name: "rice", quantity: "300g" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "ginger", quantity: "20g" },
+      { name: "fresh coriander", quantity: "1 handful" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
     ],
   },
   {
@@ -1581,6 +1889,12 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "hummus", quantity: "200g" },
       { name: "flatbreads", quantity: "4" },
       { name: "tahini", quantity: "2 tbsp" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "flat leaf parsley", quantity: "1 handful" },
+      { name: "ground cumin", quantity: "1 tsp" },
+      { name: "mixed salad", quantity: "100g" },
+      { name: "pickles", quantity: "50g" },
+      { name: "vegetable oil", quantity: "500ml" },
     ],
   },
   {
@@ -1599,6 +1913,8 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "tomato passata", quantity: "400ml" },
       { name: "mozzarella", quantity: "150g" },
       { name: "parmesan", quantity: "50g" },
+      { name: "olive oil", quantity: "4 tbsp" },
+      { name: "salt and pepper", quantity: "to taste" },
     ],
   },
   {
@@ -1617,24 +1933,55 @@ const DEMO_MEALS: DemoMeal[] = [
       { name: "coconut milk", quantity: "400ml" },
       { name: "curry leaves", quantity: "10" },
       { name: "mustard seeds", quantity: "1 tsp" },
+      { name: "onion", quantity: "1" },
+      { name: "garlic", quantity: "2 cloves" },
+      { name: "ginger", quantity: "20g" },
+      { name: "vegetable oil", quantity: "1 tbsp" },
+      { name: "rice", quantity: "250g" },
+      { name: "salt", quantity: "to taste" },
     ],
   },
 ];
 
 async function seed() {
   let insertedCount = 0;
-  let skippedCount = 0;
+  let updatedIngredientsCount = 0;
+  let skippedPricedCount = 0;
 
   for (const m of DEMO_MEALS) {
-    // Idempotent: safe to re-run after adding new dishes without touching
-    // existing meals (or a user's already-approved queue / feedback).
+    // Upsert by name — safe to re-run after editing DEMO_MEALS (e.g.
+    // expanding ingredient lists) without disturbing a user's swipe
+    // progress (approved_queue, meal_history, etc. are keyed by meal id,
+    // which is preserved). Meals already priced via the real pricing
+    // adapter (signalled by a priced ingredient row, not meals.tier —
+    // seeded meals never get a placeholder tier, only real pricing sets
+    // one) are left completely alone — never overwrite real SKU/price data.
     const existing = await db.query.meals.findFirst({ where: eq(meals.name, m.name) });
+
     if (existing) {
-      skippedCount++;
+      const pricedIngredient = await db.query.mealIngredients.findFirst({
+        where: and(eq(mealIngredients.mealId, existing.id), isNotNull(mealIngredients.skuPrice)),
+      });
+      if (pricedIngredient) {
+        skippedPricedCount++;
+        continue;
+      }
+      await db.delete(mealIngredients).where(eq(mealIngredients.mealId, existing.id));
+      await db.insert(mealIngredients).values(
+        m.ingredients.map((i) => ({
+          mealId: existing.id,
+          genericName: i.name,
+          quantity: i.quantity,
+        }))
+      );
+      updatedIngredientsCount++;
       continue;
     }
 
-    const tier = tierForCost(m.costTwoPerson);
+    // Deliberately no cost/tier here — meals start unpriced (NULL) and only
+    // get a real cost/tier from priceApprovedMeals() (real Pepesto pricing).
+    // DEMO_MEALS' costTwoPerson is kept only as an authoring-time reference
+    // for roughly which tier a dish should land in, never written to the DB.
     const [inserted] = await db
       .insert(meals)
       .values({
@@ -1643,9 +1990,6 @@ async function seed() {
         instructions: m.instructions,
         primaryProtein: m.primaryProtein,
         isClassic: m.isClassic,
-        costTwoPerson: String(m.costTwoPerson),
-        costOnePerson: String(Math.round((m.costTwoPerson / 2) * 100) / 100),
-        tier: tier ?? undefined,
       })
       .returning({ id: meals.id });
 
@@ -1658,7 +2002,10 @@ async function seed() {
     );
     insertedCount++;
   }
-  console.log(`Seeded ${insertedCount} new demo meals (${skippedCount} already existed, skipped).`);
+  console.log(
+    `Seeded ${insertedCount} new meals, refreshed ingredients on ${updatedIngredientsCount} existing meals, ` +
+      `left ${skippedPricedCount} already-priced meals untouched.`
+  );
   process.exit(0);
 }
 

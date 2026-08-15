@@ -55,18 +55,13 @@ export const approvedQueue = pgTable("approved_queue", {
   approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Swiped-left meals, so the deck doesn't keep re-showing them. */
-export const rejectedMeals = pgTable("rejected_meals", {
-  id: serial("id").primaryKey(),
-  mealId: integer("meal_id")
-    .notNull()
-    .references(() => meals.id, { onDelete: "cascade" }),
-  rejectedAt: timestamp("rejected_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
 /**
  * One row per day a dinner was actually served, used by the rotation engine
- * for both the 60-day anti-repetition rule and the previous-day protein rule.
+ * for both the 60-day anti-repetition rule and the previous-day protein
+ * rule, and (portions + costIncurred) for the rolling weekly budget check.
+ * portions/costIncurred are snapshotted at serve time — the portions
+ * setting and meal prices can both change later, but this row should keep
+ * reflecting what was actually decided that day.
  */
 export const mealHistory = pgTable("meal_history", {
   id: serial("id").primaryKey(),
@@ -75,6 +70,19 @@ export const mealHistory = pgTable("meal_history", {
     .references(() => meals.id, { onDelete: "cascade" }),
   primaryProtein: varchar("primary_protein", { length: 100 }).notNull(),
   servedDate: varchar("served_date", { length: 10 }).notNull().unique(), // YYYY-MM-DD, Europe/London
+  portions: integer("portions").notNull().default(2),
+  costIncurred: numeric("cost_incurred", { precision: 8, scale: 2 }),
+});
+
+/**
+ * Singleton (id=1) row of user-level preferences. Just `portions` for now —
+ * the daily 5pm email needs to know 1 or 2 without anyone being prompted,
+ * so it's a persisted setting (updated from the swipe-deck toggle) rather
+ * than client-only UI state.
+ */
+export const userSettings = pgTable("user_settings", {
+  id: serial("id").primaryKey(),
+  portions: integer("portions").notNull().default(2),
 });
 
 /**

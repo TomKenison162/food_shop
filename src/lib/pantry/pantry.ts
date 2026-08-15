@@ -1,16 +1,21 @@
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import { pantryItems, mealIngredients } from "../db/schema";
-import type { PricedIngredient } from "../pricing/adapter";
 
 const MIN_LEFTOVER_GRAMS = 20; // ignore trivial scraps
+
+export interface PurchasedIngredient {
+  name: string;
+  gramsPurchased: number | null;
+  gramsNeeded: number | null;
+}
 
 /**
  * Records leftover stock from a meal's priced ingredients — e.g. a recipe
  * needs 400g chicken thighs but the matched pack was 500g: 100g leftover.
  * Called once, right after priceApprovedMeals prices a meal.
  */
-export async function recordPurchaseLeftovers(mealId: number, priced: PricedIngredient[]): Promise<void> {
+export async function recordPurchaseLeftovers(mealId: number, priced: PurchasedIngredient[]): Promise<void> {
   for (const ing of priced) {
     if (ing.gramsPurchased === null || ing.gramsNeeded === null) continue;
     const leftover = ing.gramsPurchased - ing.gramsNeeded;

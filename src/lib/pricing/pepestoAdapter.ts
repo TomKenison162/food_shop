@@ -1,18 +1,25 @@
-import { GenericIngredient, PricedIngredient, PricingAdapter } from "./adapter";
+import {
+  MatchedProduct,
+  PricingAdapter,
+  QuantityCost,
+} from "./adapter";
 
 /**
  * Real pricing via Pepesto (https://www.pepesto.com), a licensed grocery
- * data API — not a scraper we built. Costs real money per call: the
- * documented rate for /products is roughly €0.04/request regardless of
- * shopping-list length, confirmed against the live API on 2026-08-15.
+ * data API — not a scraper we built. The documented rate for /products is
+ * ~€0.04 PER REQUEST (confirmed against the live API on 2026-08-15: a
+ * 3-item request charged 4 eurocents) — not per item — which is exactly
+ * why matching is batched across the whole approved queue's unique
+ * ingredient names rather than called once per dish.
  *
- * Quantity matching is best-effort: Pepesto returns the single best-matched
- * product per ingredient line (not exact-quantity packs), so we parse the
- * recipe's requested quantity into grams/pieces where we can and round up
- * to however many packs of the matched product are needed. Ingredients
- * whose units we can't parse (tbsp, tsp, ml, "to taste", ...) are priced as
- * a single pack of the matched product — an approximation, not exact.
+ * Batch size is deliberately small: empirically, a 40-name batch came back
+ * with ~16% of lines missing a match (including "chicken thighs", which
+ * matches fine alone) — a 3-5 name request matched everything reliably.
+ * Pepesto has no documented per-request item cap; this is a conservative
+ * value chosen from that observation, not a stated limit.
  */
+const MAX_NAMES_PER_REQUEST = 8;
+
 export class PepestoPricingAdapter implements PricingAdapter {
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -28,10 +35,40 @@ export class PepestoPricingAdapter implements PricingAdapter {
     this.supermarketDomain = process.env.PEPESTO_SUPERMARKET_DOMAIN || "sainsburys.co.uk";
   }
 
-  async price(ingredients: GenericIngredient[]): Promise<PricedIngredient[]> {
-    if (ingredients.length === 0) return [];
+  /**
+   * Matches each unique generic ingredient NAME (no quantity) to its best
+   * SKU, batching up to MAX_NAMES_PER_REQUEST names per call. Callers
+   * should pass the deduped set of ingredient names across the whole
+   * approved queue, not per-dish — that's the whole cost saving.
+   */
+  async matchProducts(names: string[]): Promise<Map<string, MatchedProduct | null>> {
+    const result = new Map<string, MatchedProduct | null>();
+    if (names.length === 0) return result;
 
-    const shoppingList = ingredients.map((i) => `${i.quantity} ${i.name}`).join("\n");
+    const chunks: string[][] = [];
+    for (let i = 0; i < names.length; i += MAX_NAMES_PER_REQUEST) {
+      chunks.push(names.slice(i, i + MAX_NAMES_PER_REQUEST));
+    }
+
+    for (const chunk of chunks) {
+      const data = await this.fetchProducts(chunk);
+      for (const name of chunk) {
+        const match = data.items.find((item) => matchesIngredient(item.item_name, name));
+        const top = match?.products?.[0]?.product;
+        result.set(
+          name,
+          top
+            ? { skuName: top.product_name, pricePerPackGBP: top.price.price / 100, packQuantity: top.quantity }
+            : null
+        );
+      }
+    }
+
+    return result;
+  }
+
+  private async fetchProducts(names: string[]): Promise<PepestoProductsResponse> {
+    const shoppingList = names.join("\n");
 
     const res = await fetch(`${this.baseUrl}/products`, {
       method: "POST",
@@ -50,37 +87,26 @@ export class PepestoPricingAdapter implements PricingAdapter {
       throw new Error(`Pepesto /products failed (${res.status}): ${body}`);
     }
 
-    const data: PepestoProductsResponse = await res.json();
+    return res.json();
+  }
 
-    // Pepesto returns one entry per matched line, in the same order as the
-    // input list, but match by item_name to be safe rather than assume order.
-    return ingredients.map((ing) => {
-      const match = data.items.find((item) => matchesIngredient(item.item_name, ing.name));
-      const top = match?.products?.[0]?.product;
-      if (!top) {
-        return {
-          ...ing,
-          skuName: null,
-          skuPrice: null,
-          skuUnitSize: null,
-          gramsPurchased: null,
-          gramsNeeded: null,
-        };
-      }
+  /** Pure local math — no API call. Turns a shared match into this dish's actual cost. */
+  costForQuantity(match: MatchedProduct | null, requestedQuantity: string): QuantityCost {
+    if (!match) {
+      return { skuName: null, skuPrice: null, skuUnitSize: null, gramsPurchased: null, gramsNeeded: null };
+    }
 
-      const requested = parseRequestedQuantity(ing.quantity);
-      const packsNeeded = packsNeededFor(requested, top.quantity);
-      const totalPence = top.price.price * packsNeeded;
+    const requested = parseRequestedQuantity(requestedQuantity);
+    const packsNeeded = packsNeededFor(requested, match.packQuantity);
+    const totalCost = match.pricePerPackGBP * packsNeeded;
 
-      return {
-        ...ing,
-        skuName: top.product_name,
-        skuPrice: Math.round(totalPence) / 100,
-        skuUnitSize: describeQuantity(top.quantity, packsNeeded),
-        gramsPurchased: top.quantity.grams ? top.quantity.grams * packsNeeded : null,
-        gramsNeeded: requested.grams ?? null,
-      };
-    });
+    return {
+      skuName: match.skuName,
+      skuPrice: Math.round(totalCost * 100) / 100,
+      skuUnitSize: describeQuantity(match.packQuantity, packsNeeded),
+      gramsPurchased: match.packQuantity.grams ? match.packQuantity.grams * packsNeeded : null,
+      gramsNeeded: requested.grams ?? null,
+    };
   }
 }
 

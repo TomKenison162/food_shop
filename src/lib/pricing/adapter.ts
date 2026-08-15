@@ -1,46 +1,50 @@
 /**
- * Pricing adapter interface. The recipe pipeline calls this to turn generic
- * ingredient names into priced SKUs. Swap NullPricingAdapter for a real
- * implementation once a licensed UK grocery pricing API is available — see
- * README.md "Wiring in real pricing" for the exact steps.
+ * Pricing adapter interface. Split into two concerns so ingredients shared
+ * across dishes (garlic, onion, chicken thighs, ...) only get looked up
+ * once — not once per dish — minimizing paid API calls:
+ *
+ *  1. matchProducts(names): the expensive part (a real API call). Takes
+ *     UNIQUE generic ingredient names with no quantity attached, and
+ *     returns the best-matched SKU + price-per-pack + pack size for each.
+ *     Callers should dedupe names across the *entire* approved queue
+ *     before calling this once (or a few batched times), not per meal.
+ *  2. costForQuantity(match, requestedQuantity): pure local math — turns a
+ *     shared match + a specific dish's requested quantity ("400g") into
+ *     that dish's actual cost (packs needed x price-per-pack). No API call.
+ *
+ * Swap NullPricingAdapter for a real implementation once a licensed UK
+ * grocery pricing API is available — see README.md "Wiring in real pricing".
  *
  * Do NOT implement this by scraping a retailer's website or reverse-
  * engineering its internal (non-public) frontend API — see README for why.
  */
-export interface GenericIngredient {
-  name: string;
-  quantity: string;
+export interface MatchedProduct {
+  skuName: string;
+  pricePerPackGBP: number;
+  packQuantity: { grams?: number; pieces?: number };
 }
 
-export interface PricedIngredient extends GenericIngredient {
+export interface QuantityCost {
   skuName: string | null;
-  skuPrice: number | null; // GBP
+  skuPrice: number | null; // GBP, for the requested quantity (may span multiple packs)
   skuUnitSize: string | null;
-  /** Total grams actually purchased (packs bought x pack size), when known. */
   gramsPurchased: number | null;
-  /** Grams the recipe actually calls for, when parseable from `quantity`. */
   gramsNeeded: number | null;
 }
 
 export interface PricingAdapter {
-  price(ingredients: GenericIngredient[]): Promise<PricedIngredient[]>;
+  matchProducts(names: string[]): Promise<Map<string, MatchedProduct | null>>;
+  costForQuantity(match: MatchedProduct | null, requestedQuantity: string): QuantityCost;
 }
 
-/**
- * Default adapter: prices nothing. Every ingredient comes back with null
- * sku/price fields, so downstream tiering leaves the meal's cost and tier
- * as NULL ("unpriced") rather than fabricating numbers.
- */
+/** Default adapter: matches nothing, so downstream tiering leaves meals unpriced ("NULL"). */
 export class NullPricingAdapter implements PricingAdapter {
-  async price(ingredients: GenericIngredient[]): Promise<PricedIngredient[]> {
-    return ingredients.map((ing) => ({
-      ...ing,
-      skuName: null,
-      skuPrice: null,
-      skuUnitSize: null,
-      gramsPurchased: null,
-      gramsNeeded: null,
-    }));
+  async matchProducts(names: string[]): Promise<Map<string, MatchedProduct | null>> {
+    return new Map(names.map((n) => [n, null]));
+  }
+
+  costForQuantity(): QuantityCost {
+    return { skuName: null, skuPrice: null, skuUnitSize: null, gramsPurchased: null, gramsNeeded: null };
   }
 }
 

@@ -21,7 +21,21 @@ export default function AppShell() {
         setNeedsOnboarding((data.queue?.length ?? 0) === 0);
         setOnboardingChecked(true);
       });
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.portions === 1 || data.portions === 2) setPortions(data.portions);
+      });
   }, []);
+
+  function handlePortionsChange(p: 1 | 2) {
+    setPortions(p);
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ portions: p }),
+    });
+  }
 
   useEffect(() => {
     if (!onboardingChecked || needsOnboarding) return;
@@ -57,7 +71,7 @@ export default function AppShell() {
 
   return (
     <div className="h-screen flex flex-col">
-      <ToggleBar portions={portions} onPortionsChange={setPortions} tier={tier} onTierChange={setTier} />
+      <ToggleBar portions={portions} onPortionsChange={handlePortionsChange} tier={tier} onTierChange={setTier} />
       <SwipeDeck meals={deck} portions={portions} onDecision={handleDecision} />
       <Link
         href="/queue"

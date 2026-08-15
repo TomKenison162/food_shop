@@ -2,9 +2,12 @@ import { eq, gte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { approvedQueue, meals, mealHistory } from "./db/schema";
 import { addDaysToDateString, isLondonWeekend, londonDateString, londonDayOfWeek } from "./date";
+import { consumePantryForMeal } from "./pantry/pantry";
 import { getCurrentTemperatureC } from "./weather/weather";
 import { scoreMealsForTonight } from "./ml/model";
-import { consumePantryForMeal } from "./pantry/pantry";
+import { getPortionsSetting } from "./settings";
+import { spentInRollingWeek, costForPortions, WEEKLY_BUDGET_GBP } from "./budget";
+import type { FeatureContext } from "./ml/features";
 
 const REPEAT_WINDOW_DAYS = 60;
 const MAX_SERVES_IN_WINDOW = 2;
@@ -13,22 +16,37 @@ export type MealRecord = typeof meals.$inferSelect;
 
 export interface RotationResult {
   meal: MealRecord;
+  portions: 1 | 2;
+  cost: number | null;
+  context: FeatureContext;
   alreadySelectedToday: boolean;
   relaxedProteinRule: boolean;
   relaxedRepeatRule: boolean;
-  /** true if a trained ML model ranked the pool; false if it fell back to random (not enough feedback yet). */
+  relaxedBudgetRule: boolean;
   usedModel: boolean;
+  spentThisWeekGBP: number;
 }
 
 /**
  * Picks (and persists) tonight's dinner from the approved queue, applying:
  *  - anti-repetition: a meal can't be served a 3rd time within 60 days
  *  - protein rotation: excludes yesterday's primary protein entirely
+ *  - weekly budget: prefers candidates that keep the trailing 7-day spend
+ *    (at the current portions setting) under WEEKLY_BUDGET_GBP
+ *  - ML ranking: once a model has been trained on real daily accept/deny
+ *    feedback (see src/lib/ml/model.ts), the survivors are ranked by it;
+ *    otherwise picked uniformly at random
  * Idempotent per calendar day (Europe/London) — calling this twice on the
  * same day returns the same meal instead of re-rolling.
  */
 export async function selectTonightsDinner(now: Date = new Date()): Promise<RotationResult | null> {
   const today = londonDateString(now);
+  const portions = await getPortionsSetting();
+  const context: FeatureContext = {
+    dayOfWeek: londonDayOfWeek(now),
+    isWeekend: isLondonWeekend(now),
+    temperatureC: await getCurrentTemperatureC(),
+  };
 
   const existing = await db.query.mealHistory.findFirst({
     where: eq(mealHistory.servedDate, today),
@@ -38,10 +56,15 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
     if (meal) {
       return {
         meal,
+        portions: existing.portions === 1 ? 1 : 2,
+        cost: existing.costIncurred !== null ? Number(existing.costIncurred) : null,
+        context,
         alreadySelectedToday: true,
         relaxedProteinRule: false,
         relaxedRepeatRule: false,
+        relaxedBudgetRule: false,
         usedModel: false,
+        spentThisWeekGBP: await spentInRollingWeek(today),
       };
     }
   }
@@ -89,37 +112,67 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
     relaxedRepeatRule = true;
   }
 
-  const { chosen, usedModel } = await pickFromPool(pool, now);
+  // Weekly budget: prefer candidates that don't push the trailing 7-day
+  // spend over WEEKLY_BUDGET_GBP. A meal must always be served, so if every
+  // survivor would bust the budget, fall back to the cheapest one instead
+  // of dropping the constraint silently.
+  const spentSoFar = await spentInRollingWeek(today);
+  const remaining = WEEKLY_BUDGET_GBP - spentSoFar;
+  const withinBudget = pool.filter((m) => {
+    const cost = costForPortions(m, portions);
+    return cost === null || cost <= remaining; // unpriced meals can't be budget-checked yet
+  });
+  let relaxedBudgetRule = false;
+  if (withinBudget.length > 0) {
+    pool = withinBudget;
+  } else {
+    relaxedBudgetRule = true;
+    pool = [cheapestOf(pool, portions)];
+  }
+
+  const { chosen, usedModel } = await pickFromPool(pool, context);
+  const cost = costForPortions(chosen, portions);
 
   await db.insert(mealHistory).values({
     mealId: chosen.id,
     primaryProtein: chosen.primaryProtein,
     servedDate: today,
+    portions,
+    costIncurred: cost !== null ? String(cost) : null,
   });
   await consumePantryForMeal(chosen.id);
 
-  return { meal: chosen, alreadySelectedToday: false, relaxedProteinRule, relaxedRepeatRule, usedModel };
+  return {
+    meal: chosen,
+    portions,
+    cost,
+    context,
+    alreadySelectedToday: false,
+    relaxedProteinRule,
+    relaxedRepeatRule,
+    relaxedBudgetRule,
+    usedModel,
+    spentThisWeekGBP: spentSoFar + (cost ?? 0),
+  };
 }
 
-/**
- * Ranks the surviving candidate pool with the trained ML model (contextual
- * yes/no feedback — day of week, weekend, temperature, pantry overlap,
- * recency) and picks the top-scoring meal. Falls back to a uniform random
- * pick when no model has been trained yet (too little feedback so far).
- */
+function cheapestOf(pool: MealRecord[], portions: 1 | 2): MealRecord {
+  return pool.reduce((cheapest, m) => {
+    const a = costForPortions(m, portions);
+    const b = costForPortions(cheapest, portions);
+    if (a === null) return cheapest;
+    if (b === null) return m;
+    return a < b ? m : cheapest;
+  }, pool[0]);
+}
+
 async function pickFromPool(
   pool: MealRecord[],
-  now: Date
+  ctx: FeatureContext
 ): Promise<{ chosen: MealRecord; usedModel: boolean }> {
-  const ctx = {
-    dayOfWeek: londonDayOfWeek(now),
-    isWeekend: isLondonWeekend(now),
-    temperatureC: await getCurrentTemperatureC(),
-  };
-
   const scores = await scoreMealsForTonight(pool, ctx);
   if (scores === null) {
-    // No trained model yet.
+    // No trained model yet — needs real daily accept/deny history first.
     return { chosen: pool[Math.floor(Math.random() * pool.length)], usedModel: false };
   }
 
