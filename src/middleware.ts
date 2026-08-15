@@ -1,0 +1,47 @@
+import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, deriveSessionToken, tokensMatch } from "@/lib/auth/session";
+
+/**
+ * Gates the whole app behind a single shared password, because once this is
+ * deployed to a public URL anyone who finds it could otherwise delete meals
+ * or trigger the pricing route and spend real API credits.
+ *
+ * Two route families are deliberately exempt, since both are reached
+ * without a browser session and carry their own credentials:
+ *  - /api/cron/*        — authenticated by the CRON_SECRET bearer token
+ *  - /api/feedback/respond — clicked from the daily email, authenticated by
+ *                            the HMAC signature in the URL
+ *
+ * If APP_PASSWORD isn't set the gate stays open, so local dev needs no
+ * extra setup — but it MUST be set in production. See DEPLOY.md.
+ */
+const EXEMPT_PREFIXES = ["/api/cron/", "/api/feedback/respond", "/login", "/api/login"];
+
+export async function middleware(req: NextRequest) {
+  const password = process.env.APP_PASSWORD;
+  if (!password) return NextResponse.next();
+
+  const { pathname } = req.nextUrl;
+  if (EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next();
+  }
+
+  const cookie = req.cookies.get(SESSION_COOKIE)?.value;
+  const expected = await deriveSessionToken(password);
+  if (cookie && tokensMatch(cookie, expected)) {
+    return NextResponse.next();
+  }
+
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const loginUrl = new URL("/login", req.url);
+  loginUrl.searchParams.set("next", pathname);
+  return NextResponse.redirect(loginUrl);
+}
+
+export const config = {
+  // Everything except Next's own static assets and the PWA files.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-|apple-touch-icon|sw.js|workbox-).*)"],
+};

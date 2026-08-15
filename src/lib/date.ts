@@ -41,3 +41,16 @@ export function addDaysToDateString(dateStr: string, days: number): string {
   dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
 }
+
+/** 0=Sunday .. 6=Saturday for a YYYY-MM-DD string (calendar arithmetic, timezone-free). */
+export function dayOfWeekForDateString(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** Monday of the calendar week containing `dateStr` (ISO weeks: Mon-Sun). */
+export function startOfWeek(dateStr: string): string {
+  const dow = dayOfWeekForDateString(dateStr); // 0=Sun
+  const daysSinceMonday = (dow + 6) % 7; // Mon->0, Sun->6
+  return addDaysToDateString(dateStr, -daysSinceMonday);
+}

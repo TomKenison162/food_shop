@@ -5,17 +5,12 @@ import { meals } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Swipe-left is a soft delete: the row (and its ingredients, and any
- * history referencing it) is kept, just marked deletedAt and filtered out
- * of the deck. A misswipe used to destroy a dish permanently — now it can
- * be undone via /api/meals/[id]/restore.
- */
+/** Undo a swipe-left. Clears the soft-delete marker so the meal returns to the deck. */
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   const mealId = Number(params.id);
   if (!Number.isInteger(mealId)) {
     return NextResponse.json({ error: "Invalid meal id" }, { status: 400 });
   }
-  await db.update(meals).set({ deletedAt: new Date() }).where(eq(meals.id, mealId));
+  await db.update(meals).set({ deletedAt: null }).where(eq(meals.id, mealId));
   return NextResponse.json({ ok: true });
 }

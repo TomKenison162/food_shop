@@ -13,9 +13,22 @@ import {
 export const tierEnum = pgEnum("tier", ["budget", "standard", "gourmet"]);
 
 /**
- * A recipe. cost_1_person / cost_2_person / tier stay NULL until the pricing
- * pipeline has priced every ingredient — see src/lib/pricing/adapter.ts.
- * Unpriced meals are excluded from the live swipe deck's tier filter.
+ * A recipe. All four cost columns and `tier` stay NULL until the pricing
+ * pipeline has run — see src/lib/pricing/priceApproved.ts.
+ *
+ * Two distinct costs are tracked because they answer different questions:
+ *  - costFirstShop*: what you'd pay buying every ingredient fresh, whole
+ *    packs included (a 340g jar of honey for a 2 tbsp recipe line). This is
+ *    the real shopping-list total the first time you cook something.
+ *  - costMarginal*: the prorated value of what the dish actually consumes
+ *    (2 tbsp of that jar, not the jar). This is the honest ongoing cost of
+ *    cooking it once you keep staples in, and it's what tiering and the
+ *    weekly budget use — otherwise every dish looks like a £15 blowout
+ *    because it "bought" oil, salt and spices from scratch each time.
+ *
+ * First-shop cost doesn't halve for one person (packs don't shrink), so
+ * costFirstShopOnePerson == costFirstShopTwoPerson by design; marginal cost
+ * does halve, since you genuinely use half the food.
  */
 export const meals = pgTable("meals", {
   id: serial("id").primaryKey(),
@@ -23,16 +36,24 @@ export const meals = pgTable("meals", {
   description: text("description").notNull(),
   instructions: text("instructions").array().notNull(),
   primaryProtein: varchar("primary_protein", { length: 100 }).notNull(),
-  costOnePerson: numeric("cost_one_person", { precision: 8, scale: 2 }),
-  costTwoPerson: numeric("cost_two_person", { precision: 8, scale: 2 }),
+  costFirstShopOnePerson: numeric("cost_first_shop_one_person", { precision: 8, scale: 2 }),
+  costFirstShopTwoPerson: numeric("cost_first_shop_two_person", { precision: 8, scale: 2 }),
+  costMarginalOnePerson: numeric("cost_marginal_one_person", { precision: 8, scale: 2 }),
+  costMarginalTwoPerson: numeric("cost_marginal_two_person", { precision: 8, scale: 2 }),
   tier: tierEnum("tier"),
   isClassic: boolean("is_classic").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Soft delete — set when swiped left. Rows are never hard-deleted, so a misswipe is undoable. */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 /**
- * One row per ingredient line on a meal. skuName/skuPrice/skuUnitSize stay
- * NULL until a pricing adapter other than NullPricingAdapter has run.
+ * One row per ingredient line on a meal. Pricing columns stay NULL until a
+ * pricing adapter other than NullPricingAdapter has run.
+ *
+ * packPrice/packGrams are stored (not just the computed totals) so costs can
+ * be recomputed locally — e.g. when the prorating rules change — without
+ * re-hitting the paid pricing API.
  */
 export const mealIngredients = pgTable("meal_ingredients", {
   id: serial("id").primaryKey(),
@@ -42,16 +63,21 @@ export const mealIngredients = pgTable("meal_ingredients", {
   genericName: varchar("generic_name", { length: 200 }).notNull(),
   quantity: varchar("quantity", { length: 100 }).notNull(),
   skuName: varchar("sku_name", { length: 300 }),
+  /** Whole-pack cost for this line: packsNeeded x packPrice. */
   skuPrice: numeric("sku_price", { precision: 8, scale: 2 }),
+  /** Prorated cost of just what the recipe consumes. */
+  marginalPrice: numeric("marginal_price", { precision: 8, scale: 2 }),
   skuUnitSize: varchar("sku_unit_size", { length: 100 }),
+  packPrice: numeric("pack_price", { precision: 8, scale: 2 }),
+  packGrams: numeric("pack_grams", { precision: 8, scale: 1 }),
   // Persisted from pricing so pantry leftovers can be recorded later, at
   // serve time (see rotation.ts) — not at pricing time, since pricing the
   // whole approved queue isn't 51 real shopping trips.
   gramsPurchased: numeric("grams_purchased", { precision: 8, scale: 1 }),
   gramsNeeded: numeric("grams_needed", { precision: 8, scale: 1 }),
-  // true when skuPrice is a hand-estimated guess (Pepesto had no match),
-  // not a real Sainsbury's price — surfaced in the email so guesses are
-  // never presented as real data. See src/lib/pricing/estimates.ts.
+  // true when pricing is a hand-estimated guess (the pricing API had no
+  // match), not a real Sainsbury's price — surfaced in the email so guesses
+  // are never presented as real data. See src/lib/pricing/estimates.ts.
   isEstimated: boolean("is_estimated").notNull().default(false),
 });
 
@@ -65,12 +91,19 @@ export const approvedQueue = pgTable("approved_queue", {
 });
 
 /**
- * One row per day a dinner was actually served, used by the rotation engine
- * for both the 60-day anti-repetition rule and the previous-day protein
- * rule, and (portions + costIncurred) for the rolling weekly budget check.
- * portions/costIncurred are snapshotted at serve time — the portions
- * setting and meal prices can both change later, but this row should keep
- * reflecting what was actually decided that day.
+ * One row per day a dinner was served. Serves three jobs at once:
+ *  1. the rotation engine's 60-day anti-repetition + previous-day protein rules
+ *  2. the weekly budget check (portions + costIncurred)
+ *  3. the ML model's training set
+ *
+ * Every value here is snapshotted at serve time on purpose. Prices, the
+ * portions setting, the pantry and the weather all drift, and weather in
+ * particular can't be re-fetched for a past date — so a training example
+ * must record the world as it was when the suggestion was made, not as it
+ * looks whenever the model is next retrained.
+ *
+ * `accepted` is NULL until the Yes/No link in that day's email is clicked;
+ * rows with a non-NULL value are exactly the model's labelled examples.
  */
 export const mealHistory = pgTable("meal_history", {
   id: serial("id").primaryKey(),
@@ -81,6 +114,17 @@ export const mealHistory = pgTable("meal_history", {
   servedDate: varchar("served_date", { length: 10 }).notNull().unique(), // YYYY-MM-DD, Europe/London
   portions: integer("portions").notNull().default(2),
   costIncurred: numeric("cost_incurred", { precision: 8, scale: 2 }),
+  // --- context snapshot, used as ML features ---
+  dayOfWeek: integer("day_of_week"), // 0=Sunday .. 6=Saturday
+  isWeekend: boolean("is_weekend"),
+  temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }),
+  pantryOverlapGrams: numeric("pantry_overlap_grams", { precision: 8, scale: 1 }),
+  daysSinceLastServed: integer("days_since_last_served"),
+  proteinDaysSinceLastServed: integer("protein_days_since_last_served"),
+  ingredientsCount: integer("ingredients_count"),
+  // --- label ---
+  accepted: boolean("accepted"),
+  respondedAt: timestamp("responded_at", { withTimezone: true }),
 });
 
 /**
@@ -95,27 +139,7 @@ export const userSettings = pgTable("user_settings", {
 });
 
 /**
- * Contextual yes/no training signal for the ranking model — distinct from
- * approvedQueue (general "would I ever cook this" preference). Each row is
- * "given this context, did tonight's suggestion land." Feature values are
- * snapshotted at decision time since weather can't be reliably re-fetched
- * for a past date later.
- */
-export const dailyFeedback = pgTable("daily_feedback", {
-  id: serial("id").primaryKey(),
-  mealId: integer("meal_id")
-    .notNull()
-    .references(() => meals.id, { onDelete: "cascade" }),
-  date: varchar("date", { length: 10 }).notNull(), // YYYY-MM-DD, Europe/London
-  dayOfWeek: integer("day_of_week").notNull(), // 0=Sunday .. 6=Saturday
-  isWeekend: boolean("is_weekend").notNull(),
-  temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }),
-  accepted: boolean("accepted").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-/**
- * Leftover stock from ingredient packs bought for a priced meal (e.g. a
+ * Leftover stock from ingredient packs bought for a served meal (e.g. a
  * recipe needs 400g chicken thighs but the matched SKU is a 500g pack —
  * 100g left over). Future meal selection prioritizes using this up in a
  * *different* dish before it's suggested again.

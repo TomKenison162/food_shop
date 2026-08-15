@@ -51,6 +51,12 @@ export default function QueuePage() {
     }
   }
 
+  /** Puts a meal back into the swipe deck without deleting it. */
+  async function handleUnapprove(meal: Meal) {
+    setQueue((prev) => prev.filter((row) => row.meal.id !== meal.id));
+    await fetch(`/api/meals/${meal.id}/unapprove`, { method: "POST" });
+  }
+
   return (
     <div className="min-h-screen px-4 py-6 flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -79,13 +85,24 @@ export default function QueuePage() {
       <div className="flex flex-col gap-3">
         {queue.map(({ meal }) => (
           <div key={meal.id} className="rounded-2xl border border-gray-800 bg-gray-900 p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <span className="font-semibold">{meal.name}</span>
-              <span className="text-sm text-gray-400">
-                {meal.tier ? `£${meal.costTwoPerson} (2p)` : "Pricing pending"}
+              <span className="text-sm text-gray-400 whitespace-nowrap">
+                {meal.tier ? `£${meal.costMarginalTwoPerson} (2p)` : "Pricing pending"}
               </span>
             </div>
-            <p className="text-xs text-gray-500 mt-1">{meal.primaryProtein}</p>
+            <div className="flex items-center justify-between mt-1">
+              <p className="text-xs text-gray-500">
+                {meal.primaryProtein}
+                {meal.costFirstShopTwoPerson && ` · £${meal.costFirstShopTwoPerson} first shop`}
+              </p>
+              <button
+                onClick={() => handleUnapprove(meal)}
+                className="text-xs text-gray-500 underline"
+              >
+                Remove
+              </button>
+            </div>
           </div>
         ))}
         {queue.length === 0 && <p className="text-gray-500 text-sm">No approved meals yet.</p>}

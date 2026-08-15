@@ -1,18 +1,21 @@
-import { eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { approvedQueue, meals, mealHistory } from "./db/schema";
+import { approvedQueue, meals, mealHistory, mealIngredients } from "./db/schema";
 import { addDaysToDateString, isLondonWeekend, londonDateString, londonDayOfWeek } from "./date";
-import { consumePantryForMeal, recordPurchaseLeftoversForMeal } from "./pantry/pantry";
+import {
+  consumePantryForMeal,
+  pantryOverlapGrams,
+  recordPurchaseLeftoversForMeal,
+} from "./pantry/pantry";
 import { getCurrentTemperatureC } from "./weather/weather";
 import { scoreMealsForTonight } from "./ml/model";
 import { getPortionsSetting } from "./settings";
-import { spentInRollingWeek, costForPortions, WEEKLY_BUDGET_GBP } from "./budget";
+import { costForPortions, WEEKLY_BUDGET_GBP } from "./budget";
+import { spentInWeek } from "./budgetSpend";
+import { decideTonightsDinner, REPEAT_WINDOW_DAYS, type MealRecord } from "./rotationDecision";
 import type { FeatureContext } from "./ml/features";
 
-const REPEAT_WINDOW_DAYS = 60;
-const MAX_SERVES_IN_WINDOW = 2;
-
-export type MealRecord = typeof meals.$inferSelect;
+export type { MealRecord };
 
 export interface RotationResult {
   meal: MealRecord;
@@ -28,14 +31,11 @@ export interface RotationResult {
 }
 
 /**
- * Picks (and persists) tonight's dinner from the approved queue, applying:
- *  - anti-repetition: a meal can't be served a 3rd time within 60 days
- *  - protein rotation: excludes yesterday's primary protein entirely
- *  - weekly budget: prefers candidates that keep the trailing 7-day spend
- *    (at the current portions setting) under WEEKLY_BUDGET_GBP
- *  - ML ranking: once a model has been trained on real daily accept/deny
- *    feedback (see src/lib/ml/model.ts), the survivors are ranked by it;
- *    otherwise picked uniformly at random
+ * Gathers today's state, delegates the actual choice to the pure
+ * decideTonightsDinner (see rotationDecision.ts, where the rules live and
+ * are tested), then persists the result along with a full context snapshot
+ * for the ML model to train on later.
+ *
  * Idempotent per calendar day (Europe/London) — calling this twice on the
  * same day returns the same meal instead of re-rolling.
  */
@@ -64,7 +64,7 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
         relaxedRepeatRule: false,
         relaxedBudgetRule: false,
         usedModel: false,
-        spentThisWeekGBP: await spentInRollingWeek(today),
+        spentThisWeekGBP: await spentInWeek(today),
       };
     }
   }
@@ -74,7 +74,7 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
     .from(approvedQueue)
     .innerJoin(meals, eq(approvedQueue.mealId, meals.id))
     .groupBy(meals.id, approvedQueue.mealId);
-  const approvedMeals = dedupeById(approved.map((r) => r.meal));
+  const approvedMeals = dedupeById(approved.map((r) => r.meal)).filter((m) => m.deletedAt === null);
   if (approvedMeals.length === 0) return null;
 
   const windowStart = addDaysToDateString(today, -REPEAT_WINDOW_DAYS);
@@ -83,55 +83,39 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
     .from(mealHistory)
     .where(gte(mealHistory.servedDate, windowStart))
     .groupBy(mealHistory.mealId);
-  const overExposedIds = new Set(
-    recentServes.filter((r) => r.count >= MAX_SERVES_IN_WINDOW).map((r) => r.mealId)
-  );
+  const servesInWindow = new Map(recentServes.map((r) => [r.mealId, Number(r.count)]));
 
-  const yesterday = addDaysToDateString(today, -1);
   const yesterdaysMeal = await db.query.mealHistory.findFirst({
-    where: eq(mealHistory.servedDate, yesterday),
+    where: eq(mealHistory.servedDate, addDaysToDateString(today, -1)),
   });
-  const bannedProtein = yesterdaysMeal?.primaryProtein ?? null;
 
-  const notOverExposed = approvedMeals.filter((m) => !overExposedIds.has(m.id));
+  const spentThisWeek = await spentInWeek(today);
+  const scoreList = await scoreMealsForTonight(approvedMeals, context);
+  const scores = scoreList ? new Map(approvedMeals.map((m, i) => [m.id, scoreList[i]])) : null;
 
-  let pool = bannedProtein
-    ? notOverExposed.filter((m) => m.primaryProtein !== bannedProtein)
-    : notOverExposed;
-  let relaxedProteinRule = false;
-  let relaxedRepeatRule = false;
-
-  if (pool.length === 0) {
-    // Fallback 1: drop the protein-rotation rule, keep anti-repetition.
-    pool = notOverExposed;
-    relaxedProteinRule = true;
-  }
-  if (pool.length === 0) {
-    // Fallback 2: the whole approved queue is over-exposed; drop that rule too.
-    pool = approvedMeals;
-    relaxedRepeatRule = true;
-  }
-
-  // Weekly budget: prefer candidates that don't push the trailing 7-day
-  // spend over WEEKLY_BUDGET_GBP. A meal must always be served, so if every
-  // survivor would bust the budget, fall back to the cheapest one instead
-  // of dropping the constraint silently.
-  const spentSoFar = await spentInRollingWeek(today);
-  const remaining = WEEKLY_BUDGET_GBP - spentSoFar;
-  const withinBudget = pool.filter((m) => {
-    const cost = costForPortions(m, portions);
-    return cost === null || cost <= remaining; // unpriced meals can't be budget-checked yet
+  const decision = decideTonightsDinner({
+    portions,
+    approvedMeals,
+    servesInWindow,
+    yesterdaysProtein: yesterdaysMeal?.primaryProtein ?? null,
+    spentThisWeek,
+    weeklyBudget: WEEKLY_BUDGET_GBP,
+    scores,
   });
-  let relaxedBudgetRule = false;
-  if (withinBudget.length > 0) {
-    pool = withinBudget;
-  } else {
-    relaxedBudgetRule = true;
-    pool = [cheapestOf(pool, portions)];
-  }
+  if (!decision) return null;
 
-  const { chosen, usedModel } = await pickFromPool(pool, context);
+  const chosen = decision.meal;
   const cost = costForPortions(chosen, portions);
+
+  // Snapshot the feature values as they are right now — weather can't be
+  // re-fetched for a past date, and pantry/recency drift, so a training
+  // example has to record the world as it was when the call was made.
+  const [overlap, ingredientCount, lastServed, proteinLastServed] = await Promise.all([
+    pantryOverlapGrams(chosen.id),
+    countIngredients(chosen.id),
+    daysSinceLastServed(chosen.id, today),
+    proteinDaysSinceLastServed(chosen.primaryProtein, today),
+  ]);
 
   await db.insert(mealHistory).values({
     mealId: chosen.id,
@@ -139,7 +123,15 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
     servedDate: today,
     portions,
     costIncurred: cost !== null ? String(cost) : null,
+    dayOfWeek: context.dayOfWeek,
+    isWeekend: context.isWeekend,
+    temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
+    pantryOverlapGrams: String(overlap),
+    daysSinceLastServed: lastServed,
+    proteinDaysSinceLastServed: proteinLastServed,
+    ingredientsCount: ingredientCount,
   });
+
   await recordPurchaseLeftoversForMeal(chosen.id);
   await consumePantryForMeal(chosen.id);
 
@@ -149,39 +141,42 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
     cost,
     context,
     alreadySelectedToday: false,
-    relaxedProteinRule,
-    relaxedRepeatRule,
-    relaxedBudgetRule,
-    usedModel,
-    spentThisWeekGBP: spentSoFar + (cost ?? 0),
+    relaxedProteinRule: decision.relaxedProteinRule,
+    relaxedRepeatRule: decision.relaxedRepeatRule,
+    relaxedBudgetRule: decision.relaxedBudgetRule,
+    usedModel: decision.usedModel,
+    spentThisWeekGBP: spentThisWeek + (cost ?? 0),
   };
 }
 
-function cheapestOf(pool: MealRecord[], portions: 1 | 2): MealRecord {
-  return pool.reduce((cheapest, m) => {
-    const a = costForPortions(m, portions);
-    const b = costForPortions(cheapest, portions);
-    if (a === null) return cheapest;
-    if (b === null) return m;
-    return a < b ? m : cheapest;
-  }, pool[0]);
+async function countIngredients(mealId: number): Promise<number> {
+  const rows = await db.query.mealIngredients.findMany({ where: eq(mealIngredients.mealId, mealId) });
+  return rows.length;
 }
 
-async function pickFromPool(
-  pool: MealRecord[],
-  ctx: FeatureContext
-): Promise<{ chosen: MealRecord; usedModel: boolean }> {
-  const scores = await scoreMealsForTonight(pool, ctx);
-  if (scores === null) {
-    // No trained model yet — needs real daily accept/deny history first.
-    return { chosen: pool[Math.floor(Math.random() * pool.length)], usedModel: false };
-  }
+export async function daysSinceLastServed(mealId: number, asOfDate: string): Promise<number | null> {
+  const rows = await db
+    .select({ servedDate: mealHistory.servedDate })
+    .from(mealHistory)
+    .where(and(eq(mealHistory.mealId, mealId), sql`${mealHistory.servedDate} < ${asOfDate}`));
+  return mostRecentGap(rows.map((r) => r.servedDate), asOfDate);
+}
 
-  let bestIndex = 0;
-  for (let i = 1; i < scores.length; i++) {
-    if (scores[i] > scores[bestIndex]) bestIndex = i;
-  }
-  return { chosen: pool[bestIndex], usedModel: true };
+export async function proteinDaysSinceLastServed(
+  protein: string,
+  asOfDate: string
+): Promise<number | null> {
+  const rows = await db
+    .select({ servedDate: mealHistory.servedDate })
+    .from(mealHistory)
+    .where(and(eq(mealHistory.primaryProtein, protein), sql`${mealHistory.servedDate} < ${asOfDate}`));
+  return mostRecentGap(rows.map((r) => r.servedDate), asOfDate);
+}
+
+function mostRecentGap(dates: string[], asOfDate: string): number | null {
+  if (dates.length === 0) return null;
+  const mostRecent = dates.reduce((a, b) => (a > b ? a : b));
+  return Math.round((Date.parse(asOfDate) - Date.parse(mostRecent)) / (1000 * 60 * 60 * 24));
 }
 
 function dedupeById(list: MealRecord[]): MealRecord[] {

@@ -7,9 +7,14 @@ export interface Meal {
   description: string;
   instructions: string[];
   primaryProtein: string;
-  costOnePerson: string | null;
-  costTwoPerson: string | null;
+  /** What a first shop costs (whole packs). Doesn't halve for one person. */
+  costFirstShopOnePerson: string | null;
+  costFirstShopTwoPerson: string | null;
+  /** Prorated cost of what the dish actually consumes — drives tier and budget. */
+  costMarginalOnePerson: string | null;
+  costMarginalTwoPerson: string | null;
   tier: Tier | null;
   isClassic: boolean;
   createdAt: string;
+  deletedAt: string | null;
 }

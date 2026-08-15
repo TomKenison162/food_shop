@@ -1,24 +1,29 @@
-import { and, gte, lt, eq, sql } from "drizzle-orm";
-import { db } from "./db/client";
-import { mealHistory } from "./db/schema";
-import { addDaysToDateString } from "./date";
-
+/**
+ * Pure budget rules — deliberately free of database imports so the
+ * selection logic that depends on them stays unit-testable. The query side
+ * lives in budgetSpend.ts.
+ */
 export const WEEKLY_BUDGET_GBP = 100;
 
-/** Sum of costIncurred for the 6 days before `today` (a trailing 7-day window including today's pick). */
-export async function spentInRollingWeek(today: string): Promise<number> {
-  const windowStart = addDaysToDateString(today, -6);
-  const rows = await db
-    .select({ total: sql<string>`coalesce(sum(${mealHistory.costIncurred}), 0)` })
-    .from(mealHistory)
-    .where(and(gte(mealHistory.servedDate, windowStart), lt(mealHistory.servedDate, today)));
-  return Number(rows[0]?.total ?? 0);
-}
-
+/**
+ * The cost a meal contributes to the weekly budget: its MARGINAL cost (what
+ * cooking it actually consumes), not the first-shop whole-pack total —
+ * budgeting against first-shop cost would double-count staples you already
+ * own every single time they appear in a recipe.
+ */
 export function costForPortions(
-  meal: { costOnePerson: string | null; costTwoPerson: string | null },
+  meal: { costMarginalOnePerson: string | null; costMarginalTwoPerson: string | null },
   portions: 1 | 2
 ): number | null {
-  const raw = portions === 1 ? meal.costOnePerson : meal.costTwoPerson;
+  const raw = portions === 1 ? meal.costMarginalOnePerson : meal.costMarginalTwoPerson;
+  return raw !== null ? Number(raw) : null;
+}
+
+/** First-shop total to display on the shopping list, for the chosen portion size. */
+export function firstShopCostForPortions(
+  meal: { costFirstShopOnePerson: string | null; costFirstShopTwoPerson: string | null },
+  portions: 1 | 2
+): number | null {
+  const raw = portions === 1 ? meal.costFirstShopOnePerson : meal.costFirstShopTwoPerson;
   return raw !== null ? Number(raw) : null;
 }

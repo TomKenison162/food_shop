@@ -25,6 +25,9 @@ drizzle/meta/
 # local pglite database (dev-only, no cloud DB configured)
 .pglite-data/
 
+# database dumps from `npm run db:export` (derived data, can be large)
+food-shop-export*.json
+
 # vercel
 .vercel
 

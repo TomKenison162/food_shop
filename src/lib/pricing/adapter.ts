@@ -10,7 +10,7 @@
  *     before calling this once (or a few batched times), not per meal.
  *  2. costForQuantity(match, requestedQuantity): pure local math — turns a
  *     shared match + a specific dish's requested quantity ("400g") into
- *     that dish's actual cost (packs needed x price-per-pack). No API call.
+ *     that dish's cost. No API call.
  *
  * Swap NullPricingAdapter for a real implementation once a licensed UK
  * grocery pricing API is available — see README.md "Wiring in real pricing".
@@ -26,8 +26,13 @@ export interface MatchedProduct {
 
 export interface QuantityCost {
   skuName: string | null;
-  skuPrice: number | null; // GBP, for the requested quantity (may span multiple packs)
+  /** Whole-pack cost: packsNeeded x packPrice. What a first shop actually costs. */
+  firstShopPrice: number | null;
+  /** Prorated cost of only what this recipe consumes. What cooking it really costs ongoing. */
+  marginalPrice: number | null;
   skuUnitSize: string | null;
+  packPrice: number | null;
+  packGrams: number | null;
   gramsPurchased: number | null;
   gramsNeeded: number | null;
 }
@@ -37,6 +42,17 @@ export interface PricingAdapter {
   costForQuantity(match: MatchedProduct | null, requestedQuantity: string): QuantityCost;
 }
 
+export const EMPTY_COST: QuantityCost = {
+  skuName: null,
+  firstShopPrice: null,
+  marginalPrice: null,
+  skuUnitSize: null,
+  packPrice: null,
+  packGrams: null,
+  gramsPurchased: null,
+  gramsNeeded: null,
+};
+
 /** Default adapter: matches nothing, so downstream tiering leaves meals unpriced ("NULL"). */
 export class NullPricingAdapter implements PricingAdapter {
   async matchProducts(names: string[]): Promise<Map<string, MatchedProduct | null>> {
@@ -44,7 +60,7 @@ export class NullPricingAdapter implements PricingAdapter {
   }
 
   costForQuantity(): QuantityCost {
-    return { skuName: null, skuPrice: null, skuUnitSize: null, gramsPurchased: null, gramsNeeded: null };
+    return { ...EMPTY_COST };
   }
 }
 

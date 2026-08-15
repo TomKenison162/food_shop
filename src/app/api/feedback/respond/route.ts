@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { dailyFeedback } from "@/lib/db/schema";
+import { mealHistory } from "@/lib/db/schema";
 import { verifyFeedbackLink } from "@/lib/feedbackLink";
 import { trainModel } from "@/lib/ml/model";
 
@@ -17,44 +18,52 @@ function htmlPage(message: string): NextResponse {
 }
 
 /**
- * The Yes/No links clicked from the daily email. This is the real,
- * continuous training signal for the ranking model (see src/lib/ml/model.ts)
- * — every response retrains it immediately so it keeps improving day by day.
+ * The Yes/No links clicked from the daily email — the real, continuous
+ * training signal for the ranking model. Labels the meal_history row for
+ * that date (which already holds the feature context, snapshotted when the
+ * suggestion was made) and retrains immediately, so the model keeps
+ * improving day by day.
+ *
+ * Exempt from the login gate (see src/middleware.ts): it's clicked from an
+ * email client with no session, and is authenticated by its HMAC signature.
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const mealId = Number(sp.get("mealId"));
   const date = sp.get("date") ?? "";
-  const dayOfWeek = Number(sp.get("dayOfWeek"));
-  const isWeekend = sp.get("isWeekend") === "true";
-  const temperatureCRaw = sp.get("temperatureC");
-  const temperatureC = temperatureCRaw ? Number(temperatureCRaw) : null;
   const accepted = sp.get("accepted") === "true";
   const sig = sp.get("sig") ?? "";
 
-  if (!Number.isInteger(mealId) || !date || Number.isNaN(dayOfWeek)) {
+  if (!Number.isInteger(mealId) || !date) {
     return htmlPage("That link looks malformed.");
   }
 
-  const valid = verifyFeedbackLink({ mealId, date, dayOfWeek, isWeekend, temperatureC, accepted }, sig);
-  if (!valid) {
+  if (!verifyFeedbackLink({ mealId, date, accepted }, sig)) {
     return htmlPage("That link isn't valid.");
   }
 
-  await db.insert(dailyFeedback).values({
-    mealId,
-    date,
-    dayOfWeek,
-    isWeekend,
-    temperatureC: temperatureC !== null ? String(temperatureC) : null,
-    accepted,
+  const row = await db.query.mealHistory.findFirst({
+    where: and(eq(mealHistory.servedDate, date), eq(mealHistory.mealId, mealId)),
   });
+  if (!row) {
+    return htmlPage("No dinner was recorded for that date.");
+  }
+  if (row.accepted !== null) {
+    return htmlPage("Already recorded — thanks.");
+  }
+
+  await db
+    .update(mealHistory)
+    .set({ accepted, respondedAt: new Date() })
+    .where(eq(mealHistory.id, row.id));
 
   const trainResult = await trainModel();
 
   return htmlPage(
-    accepted
-      ? `Noted — glad it landed. ${trainResult.trained ? "Model retrained." : ""}`
-      : `Noted — thanks. ${trainResult.trained ? "Model retrained." : ""}`
+    `${accepted ? "Noted — glad it landed." : "Noted — thanks."} ${
+      trainResult.trained
+        ? `Model retrained on ${trainResult.sampleCount} replies.`
+        : "Not enough replies to train the model yet."
+    }`
   );
 }

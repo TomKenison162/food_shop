@@ -1,4 +1,4 @@
-import type { MealRecord } from "../rotation";
+import type { MealRecord } from "../rotationDecision";
 
 const PROTEIN_BUCKETS = ["beef", "chicken", "pork", "lamb", "fish", "other"] as const;
 
@@ -62,7 +62,7 @@ export function buildFeatureVector(
     ctx.isWeekend ? 1 : 0,
     ctx.temperatureC !== null ? ctx.temperatureC / 20 : 0,
     ctx.temperatureC === null ? 1 : 0,
-    meal.costTwoPerson !== null ? Number(meal.costTwoPerson) / 10 : 0.5,
+    meal.costMarginalTwoPerson !== null ? Number(meal.costMarginalTwoPerson) / 10 : 0.5,
     tierOrdinal(meal.tier),
     ...PROTEIN_BUCKETS.map((p) => (p === bucket ? 1 : 0)),
     Math.min(extras.pantryOverlapGrams / 500, 1),

@@ -12,7 +12,11 @@ interface Props {
 }
 
 export default function MealCard({ meal, portions }: Props) {
-  const cost = portions === 1 ? meal.costOnePerson : meal.costTwoPerson;
+  // Headline number is the marginal cost — what cooking it actually uses.
+  // First-shop cost is shown underneath, since it's only what you pay the
+  // first time, before you have staples in.
+  const cost = portions === 1 ? meal.costMarginalOnePerson : meal.costMarginalTwoPerson;
+  const firstShop = portions === 1 ? meal.costFirstShopOnePerson : meal.costFirstShopTwoPerson;
   const tierLabel = meal.tier ? meal.tier[0].toUpperCase() + meal.tier.slice(1) : "Pricing pending";
   const tierClass = meal.tier ? TIER_STYLES[meal.tier] : "bg-gray-700/40 text-gray-300 border-gray-600";
 
@@ -34,7 +38,12 @@ export default function MealCard({ meal, portions }: Props) {
         <span className="text-xs text-gray-500">
           {portions} {portions === 1 ? "portion" : "portions"}
         </span>
-        <span className="text-3xl font-bold">{cost ? `£${cost}` : "—"}</span>
+        <div className="text-right">
+          <div className="text-3xl font-bold">{cost ? `£${cost}` : "—"}</div>
+          {firstShop && (
+            <div className="text-xs text-gray-500">£{firstShop} first shop</div>
+          )}
+        </div>
       </div>
     </div>
   );

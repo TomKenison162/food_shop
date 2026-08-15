@@ -1,8 +1,5 @@
-import {
-  MatchedProduct,
-  PricingAdapter,
-  QuantityCost,
-} from "./adapter";
+import { EMPTY_COST, MatchedProduct, PricingAdapter, QuantityCost } from "./adapter";
+import { parseQuantityToGrams } from "./quantity";
 
 /**
  * Real pricing via Pepesto (https://www.pepesto.com), a licensed grocery
@@ -90,24 +87,71 @@ export class PepestoPricingAdapter implements PricingAdapter {
     return res.json();
   }
 
-  /** Pure local math — no API call. Turns a shared match into this dish's actual cost. */
+  /** Pure local math — no API call. Turns a shared match into this dish's costs. */
   costForQuantity(match: MatchedProduct | null, requestedQuantity: string): QuantityCost {
-    if (!match) {
-      return { skuName: null, skuPrice: null, skuUnitSize: null, gramsPurchased: null, gramsNeeded: null };
-    }
+    return computeQuantityCost(match, requestedQuantity);
+  }
+}
 
-    const requested = parseRequestedQuantity(requestedQuantity);
-    const packsNeeded = packsNeededFor(requested, match.packQuantity);
-    const totalCost = match.pricePerPackGBP * packsNeeded;
+/**
+ * Shared costing maths, exported so backfills and tests can reuse it
+ * without constructing a live API client.
+ */
+export function computeQuantityCost(
+  match: MatchedProduct | null,
+  requestedQuantity: string
+): QuantityCost {
+  if (!match) return { ...EMPTY_COST };
 
+  const parsed = parseQuantityToGrams(requestedQuantity);
+  const packGrams = match.packQuantity.grams ?? null;
+  const packPrice = match.pricePerPackGBP;
+
+  // Pieces-based pack (e.g. "1 garlic bulb") with a piece-counted recipe line.
+  if (packGrams === null) {
+    const packPieces = match.packQuantity.pieces ?? 1;
+    const neededPieces = parsed.pieces ?? 1;
+    const packs = Math.max(1, Math.ceil(neededPieces / packPieces));
+    const fraction = Math.min(1, neededPieces / (packPieces * packs));
     return {
       skuName: match.skuName,
-      skuPrice: Math.round(totalCost * 100) / 100,
-      skuUnitSize: describeQuantity(match.packQuantity, packsNeeded),
-      gramsPurchased: match.packQuantity.grams ? match.packQuantity.grams * packsNeeded : null,
-      gramsNeeded: requested.grams ?? null,
+      firstShopPrice: round2(packPrice * packs),
+      marginalPrice: round2(packPrice * packs * fraction),
+      skuUnitSize: `${packs} x ${packPieces}-piece pack`,
+      packPrice: round2(packPrice),
+      packGrams: null,
+      gramsPurchased: null,
+      gramsNeeded: null,
     };
   }
+
+  // Unparseable quantity against a weighed pack: assume one pack, and treat
+  // the line as consuming a small share of it rather than the whole thing —
+  // these are overwhelmingly staples ("a splash of oil", "seasoning").
+  const gramsNeeded = parsed.grams ?? packGrams * 0.1;
+
+  const packs = Math.max(1, Math.ceil(gramsNeeded / packGrams));
+  const gramsPurchased = packGrams * packs;
+  const fraction = Math.min(1, gramsNeeded / gramsPurchased);
+
+  return {
+    skuName: match.skuName,
+    firstShopPrice: round2(packPrice * packs),
+    marginalPrice: round2(packPrice * packs * fraction),
+    skuUnitSize: `${packs} x ${packGrams}g pack`,
+    packPrice: round2(packPrice),
+    packGrams,
+    gramsPurchased,
+    gramsNeeded: round1(gramsNeeded),
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }
 
 interface PepestoProductsResponse {
@@ -128,38 +172,4 @@ function matchesIngredient(itemName: string, ingredientName: string): boolean {
   const a = itemName.toLowerCase().trim();
   const b = ingredientName.toLowerCase().trim();
   return a === b || a.includes(b) || b.includes(a);
-}
-
-/** Best-effort parse of "400g", "1kg", "2 cloves", "3 pieces" into grams/pieces. */
-function parseRequestedQuantity(qty: string): { grams?: number; pieces?: number } {
-  const kg = qty.match(/(\d+(?:\.\d+)?)\s*kg/i);
-  if (kg) return { grams: parseFloat(kg[1]) * 1000 };
-
-  const g = qty.match(/(\d+(?:\.\d+)?)\s*g\b/i);
-  if (g) return { grams: parseFloat(g[1]) };
-
-  const pieces = qty.match(/(\d+(?:\.\d+)?)\s*(clove|cloves|piece|pieces|whole)/i);
-  if (pieces) return { pieces: parseFloat(pieces[1]) };
-
-  return {};
-}
-
-function packsNeededFor(
-  requested: { grams?: number; pieces?: number },
-  productQty: { grams?: number; pieces?: number }
-): number {
-  if (requested.grams && productQty.grams) {
-    return Math.max(1, Math.ceil(requested.grams / productQty.grams));
-  }
-  if (requested.pieces && productQty.pieces) {
-    return Math.max(1, Math.ceil(requested.pieces / productQty.pieces));
-  }
-  // Unparseable unit (tbsp, tsp, ml, "to taste", ...) — approximate as one pack.
-  return 1;
-}
-
-function describeQuantity(productQty: { grams?: number; pieces?: number }, packs: number): string {
-  if (productQty.grams) return `${packs} x ${productQty.grams}g pack`;
-  if (productQty.pieces) return `${packs} x ${productQty.pieces}-piece pack`;
-  return `${packs} pack(s)`;
 }

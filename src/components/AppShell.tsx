@@ -13,6 +13,10 @@ export default function AppShell() {
   const [portions, setPortions] = useState<1 | 2>(2);
   const [tier, setTier] = useState<Tier | "all">("all");
   const [deck, setDeck] = useState<Meal[]>([]);
+  const [lastDecision, setLastDecision] = useState<{
+    meal: Meal;
+    direction: "approve" | "reject";
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/queue")
@@ -52,7 +56,19 @@ export default function AppShell() {
 
   async function handleDecision(meal: Meal, direction: "approve" | "reject") {
     setDeck((prev) => prev.filter((m) => m.id !== meal.id));
+    setLastDecision({ meal, direction });
     await fetch(`/api/meals/${meal.id}/${direction}`, { method: "POST" });
+  }
+
+  /** Reverses the most recent swipe — a misswipe shouldn't be permanent. */
+  async function handleUndo() {
+    if (!lastDecision) return;
+    const { meal, direction } = lastDecision;
+    setLastDecision(null);
+    await fetch(`/api/meals/${meal.id}/${direction === "reject" ? "restore" : "unapprove"}`, {
+      method: "POST",
+    });
+    setDeck((prev) => [meal, ...prev]);
   }
 
   if (!onboardingChecked) {
@@ -73,12 +89,19 @@ export default function AppShell() {
     <div className="h-screen flex flex-col">
       <ToggleBar portions={portions} onPortionsChange={handlePortionsChange} tier={tier} onTierChange={setTier} />
       <SwipeDeck meals={deck} portions={portions} onDecision={handleDecision} />
-      <Link
-        href="/queue"
-        className="text-center text-sm text-gray-500 py-3 border-t border-gray-800"
-      >
-        View approved queue →
-      </Link>
+      <div className="flex items-center justify-between px-4 py-3 border-t border-gray-800">
+        {lastDecision ? (
+          <button onClick={handleUndo} className="text-sm text-gray-300 underline">
+            Undo {lastDecision.direction === "reject" ? "reject" : "approve"} of{" "}
+            {lastDecision.meal.name}
+          </button>
+        ) : (
+          <span />
+        )}
+        <Link href="/queue" className="text-sm text-gray-500">
+          Approved queue →
+        </Link>
+      </div>
     </div>
   );
 }

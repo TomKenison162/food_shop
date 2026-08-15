@@ -3,9 +3,6 @@ import { createHmac, timingSafeEqual } from "crypto";
 export interface FeedbackLinkParams {
   mealId: number;
   date: string; // YYYY-MM-DD
-  dayOfWeek: number;
-  isWeekend: boolean;
-  temperatureC: number | null;
   accepted: boolean;
 }
 
@@ -16,7 +13,7 @@ function secret(): string {
 }
 
 function canonicalString(p: FeedbackLinkParams): string {
-  return [p.mealId, p.date, p.dayOfWeek, p.isWeekend, p.temperatureC ?? "null", p.accepted].join("|");
+  return [p.mealId, p.date, p.accepted].join("|");
 }
 
 function sign(p: FeedbackLinkParams): string {
@@ -24,18 +21,15 @@ function sign(p: FeedbackLinkParams): string {
 }
 
 /**
- * Builds a signed GET link for the daily email's Yes/No buttons. Context
- * (day of week, weekend, temperature) is embedded in the URL rather than
- * recomputed when clicked, so the training example reflects the day the
- * email was actually sent for, not whenever the click happens to land.
+ * Builds a signed GET link for the daily email's Yes/No buttons. Only the
+ * identifiers travel in the URL — the ML feature context lives on the
+ * meal_history row for that date, snapshotted when the suggestion was made,
+ * so clicking days later still records the right context.
  */
 export function buildFeedbackLink(appUrl: string, p: FeedbackLinkParams): string {
   const params = new URLSearchParams({
     mealId: String(p.mealId),
     date: p.date,
-    dayOfWeek: String(p.dayOfWeek),
-    isWeekend: String(p.isWeekend),
-    temperatureC: p.temperatureC !== null ? String(p.temperatureC) : "",
     accepted: String(p.accepted),
     sig: sign(p),
   });
