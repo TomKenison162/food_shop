@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPortionsSetting, setPortionsSetting } from "@/lib/settings";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const portions = await getPortionsSetting();
   return NextResponse.json({ portions });

@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { meals } from "@/lib/db/schema";
 
+export const dynamic = "force-dynamic";
+
 /** Swipe-left is permanent: the meal (and its ingredients, cascade) is deleted, not just hidden. */
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   const mealId = Number(params.id);

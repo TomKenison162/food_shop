@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { approvedQueue, meals } from "@/lib/db/schema";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const rows = await db
     .select({ meal: meals, approvedAt: approvedQueue.approvedAt })

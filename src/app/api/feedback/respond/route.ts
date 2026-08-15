@@ -4,6 +4,8 @@ import { dailyFeedback } from "@/lib/db/schema";
 import { verifyFeedbackLink } from "@/lib/feedbackLink";
 import { trainModel } from "@/lib/ml/model";
 
+export const dynamic = "force-dynamic";
+
 function htmlPage(message: string): NextResponse {
   return new NextResponse(
     `<!doctype html><html><head><meta charset="utf-8"><title>Food Shop</title>

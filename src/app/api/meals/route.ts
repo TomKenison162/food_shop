@@ -3,6 +3,8 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { meals, approvedQueue } from "@/lib/db/schema";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Swipe-deck feed: excludes already-approved meals. Rejected meals are hard-
  * deleted on swipe-left (see /api/meals/[id]/reject), so there's nothing to

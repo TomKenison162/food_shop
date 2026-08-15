@@ -3,6 +3,8 @@ import { db } from "@/lib/db/client";
 import { dailyFeedback } from "@/lib/db/schema";
 import { londonDateString } from "@/lib/date";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Records a contextual yes/no training example — "given this day/weekend/
  * temperature, did this meal land." Distinct from approve/reject (general

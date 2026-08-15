@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { selectTonightsDinner } from "@/lib/rotation";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const result = await selectTonightsDinner();
   if (!result) {
