@@ -1,5 +1,6 @@
 import { EMPTY_COST, MatchedProduct, PricingAdapter, QuantityCost } from "./adapter";
 import { parseQuantityToGrams } from "./quantity";
+import { isPlausibleProduct, matchesIngredient } from "./matching";
 
 /**
  * Real pricing via Pepesto (https://www.pepesto.com), a licensed grocery
@@ -16,6 +17,9 @@ import { parseQuantityToGrams } from "./quantity";
  * value chosen from that observation, not a stated limit.
  */
 const MAX_NAMES_PER_REQUEST = 8;
+
+/** See the clamp in computeQuantityCost — guards against quantity misparses. */
+const MAX_PACKS_PER_LINE = 8;
 
 export class PepestoPricingAdapter implements PricingAdapter {
   private readonly apiKey: string;
@@ -51,7 +55,10 @@ export class PepestoPricingAdapter implements PricingAdapter {
       const data = await this.fetchProducts(chunk);
       for (const name of chunk) {
         const match = data.items.find((item) => matchesIngredient(item.item_name, name));
-        const top = match?.products?.[0]?.product;
+        // Take the first candidate that actually looks like the ingredient,
+        // not just the first one returned — see matching.ts for why.
+        const top = match?.products?.find((p) => isPlausibleProduct(p.product.product_name, name))
+          ?.product;
         result.set(
           name,
           top
@@ -88,8 +95,12 @@ export class PepestoPricingAdapter implements PricingAdapter {
   }
 
   /** Pure local math — no API call. Turns a shared match into this dish's costs. */
-  costForQuantity(match: MatchedProduct | null, requestedQuantity: string): QuantityCost {
-    return computeQuantityCost(match, requestedQuantity);
+  costForQuantity(
+    match: MatchedProduct | null,
+    requestedQuantity: string,
+    ingredientName?: string
+  ): QuantityCost {
+    return computeQuantityCost(match, requestedQuantity, ingredientName);
   }
 }
 
@@ -99,11 +110,12 @@ export class PepestoPricingAdapter implements PricingAdapter {
  */
 export function computeQuantityCost(
   match: MatchedProduct | null,
-  requestedQuantity: string
+  requestedQuantity: string,
+  ingredientName?: string
 ): QuantityCost {
   if (!match) return { ...EMPTY_COST };
 
-  const parsed = parseQuantityToGrams(requestedQuantity);
+  const parsed = parseQuantityToGrams(requestedQuantity, ingredientName);
   const packGrams = match.packQuantity.grams ?? null;
   const packPrice = match.pricePerPackGBP;
 
@@ -130,7 +142,11 @@ export function computeQuantityCost(
   // these are overwhelmingly staples ("a splash of oil", "seasoning").
   const gramsNeeded = parsed.grams ?? packGrams * 0.1;
 
-  const packs = Math.max(1, Math.ceil(gramsNeeded / packGrams));
+  // Safety net against quantity-parse failures. A home recipe line needing
+  // more than a handful of packs is nearly always a misparse rather than a
+  // real requirement, and an unclamped one poisons the meal's total and the
+  // weekly budget with it (a stray "2 bay leaves" once produced £88).
+  const packs = Math.min(MAX_PACKS_PER_LINE, Math.max(1, Math.ceil(gramsNeeded / packGrams)));
   const gramsPurchased = packGrams * packs;
   const fraction = Math.min(1, gramsNeeded / gramsPurchased);
 
@@ -168,8 +184,3 @@ interface PepestoProductsResponse {
   currency?: string;
 }
 
-function matchesIngredient(itemName: string, ingredientName: string): boolean {
-  const a = itemName.toLowerCase().trim();
-  const b = ingredientName.toLowerCase().trim();
-  return a === b || a.includes(b) || b.includes(a);
-}

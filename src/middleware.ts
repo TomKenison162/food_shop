@@ -12,14 +12,25 @@ import { SESSION_COOKIE, deriveSessionToken, tokensMatch } from "@/lib/auth/sess
  *  - /api/feedback/respond — clicked from the daily email, authenticated by
  *                            the HMAC signature in the URL
  *
- * If APP_PASSWORD isn't set the gate stays open, so local dev needs no
- * extra setup — but it MUST be set in production. See DEPLOY.md.
+ * Missing APP_PASSWORD is handled differently per environment, on purpose:
+ * locally the gate opens (no setup needed to run `npm run dev`), but in
+ * production it FAILS CLOSED with a 503. Forgetting to set it in Vercel
+ * would otherwise silently publish an app where anyone could delete meals
+ * or run up real pricing-API charges — a much worse outcome than downtime.
  */
 const EXEMPT_PREFIXES = ["/api/cron/", "/api/feedback/respond", "/login", "/api/login"];
 
 export async function middleware(req: NextRequest) {
   const password = process.env.APP_PASSWORD;
-  if (!password) return NextResponse.next();
+  if (!password) {
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { error: "APP_PASSWORD is not configured. Refusing to serve an unprotected deployment." },
+        { status: 503 }
+      );
+    }
+    return NextResponse.next();
+  }
 
   const { pathname } = req.nextUrl;
   if (EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) {

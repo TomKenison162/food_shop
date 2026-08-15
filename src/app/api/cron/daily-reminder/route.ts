@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { mealHistory } from "@/lib/db/schema";
 import { isAuthorizedCronRequest } from "@/lib/auth/cron";
-import { selectTonightsDinner } from "@/lib/rotation";
+import { getPlannedMeal, selectTonightsDinner } from "@/lib/rotation";
 import { sendDinnerReminder, sendFailureAlert } from "@/lib/email/sendReminder";
-import { londonHour } from "@/lib/date";
+import { londonDateString, londonHour } from "@/lib/date";
+import { isPaused } from "@/lib/settings";
+import { purgeStalePantryItems } from "@/lib/pantry/pantry";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -17,10 +22,9 @@ const SEND_HOUR = 17;
  * need hand-adjusting twice a year.
  *
  * Sends at or after SEND_HOUR rather than only exactly at it, so a poll
- * that's late — a missed CI window, a laptop asleep at 5pm — still delivers
- * that day rather than silently skipping. Idempotency comes from
- * selectTonightsDinner being once-per-day: the `alreadySelectedToday` guard
- * is what stops the hourly poll re-sending all evening.
+ * that's late still delivers that day rather than silently skipping.
+ * Re-sending is prevented by the emailedAt stamp, not by the plan existing —
+ * the weekly planner may well have chosen today's meal days ago.
  */
 export async function GET(req: NextRequest) {
   if (!isAuthorizedCronRequest(req)) {
@@ -35,24 +39,37 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  const today = londonDateString();
+
   try {
+    if (await isPaused(today)) {
+      return NextResponse.json({ skipped: true, reason: "Reminders are paused." });
+    }
+
+    // Expired leftovers would otherwise show up as "you already have this".
+    await purgeStalePantryItems(today);
+
+    const existing = await getPlannedMeal(today);
+    if (existing?.emailedAt) {
+      return NextResponse.json({ skipped: true, reason: "Already emailed today." });
+    }
+
     const result = await selectTonightsDinner();
     if (!result) {
       return NextResponse.json({ sent: false, reason: "Approved queue is empty." });
     }
-    if (result.alreadySelectedToday) {
-      return NextResponse.json({
-        skipped: true,
-        reason: "Already emailed today.",
-        meal: result.meal.name,
-      });
-    }
 
     const emailResult = await sendDinnerReminder(result);
     if (!emailResult.sent) {
-      await sendFailureAlert(`Email not sent: ${emailResult.reason ?? "unknown reason"}`);
+      await sendFailureAlert(`Daily email not sent: ${emailResult.reason ?? "unknown reason"}`);
       return NextResponse.json({ meal: result.meal.name, ...emailResult }, { status: 500 });
     }
+
+    await db
+      .update(mealHistory)
+      .set({ emailedAt: new Date() })
+      .where(eq(mealHistory.id, (await getPlannedMeal(today))!.id));
+
     return NextResponse.json({ meal: result.meal.name, ...emailResult });
   } catch (err) {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);

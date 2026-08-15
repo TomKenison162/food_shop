@@ -1,22 +1,20 @@
-name: Daily dinner reminder cron
+name: Daily dinner reminder
 
 # Runs hourly (GitHub Actions has no per-plan frequency limit, unlike
-# Vercel's Hobby cron which is capped at once/day). The route itself only
-# actually sends once it's 17:00 Europe/London, so hourly polling is what
-# keeps the reminder correct across the GMT/BST daylight-saving switch
-# without hand-adjusting a cron expression twice a year. This is the
-# primary trigger; vercel.json's once-daily cron is just a backup in case
-# this workflow is ever disabled.
+# Vercel's Hobby cron which is capped at once/day). The route no-ops until
+# 17:00 Europe/London, which is what keeps the reminder correct across the
+# GMT/BST switch without editing this expression twice a year. This is the
+# primary trigger; vercel.json's daily cron is a backup.
 on:
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch: {}
 
 jobs:
-  trigger:
+  daily-reminder:
     runs-on: ubuntu-latest
     steps:
-      - name: Call daily-reminder endpoint
+      - name: Tonight's dinner email
         run: |
           curl -sf -X GET "${{ secrets.APP_URL }}/api/cron/daily-reminder" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

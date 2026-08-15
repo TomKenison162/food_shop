@@ -52,8 +52,8 @@ async function main() {
 
   console.log("3. Backfilling pack price/size from stored sku_unit_size…");
   const ingredients = await sql<
-    { id: number; quantity: string; sku_price: string | null; sku_unit_size: string | null; is_estimated: boolean }[]
-  >`SELECT id, quantity, sku_price, sku_unit_size, is_estimated FROM meal_ingredients WHERE sku_price IS NOT NULL`;
+    { id: number; generic_name: string; quantity: string; sku_price: string | null; sku_unit_size: string | null; is_estimated: boolean }[]
+  >`SELECT id, generic_name, quantity, sku_price, sku_unit_size, is_estimated FROM meal_ingredients WHERE sku_price IS NOT NULL`;
 
   let backfilled = 0;
   for (const ing of ingredients) {
@@ -65,7 +65,7 @@ async function main() {
     const packGrams = m ? Number(m[2]) : ing.is_estimated ? 400 : null;
     const packPrice = lineTotal / packs;
 
-    const gramsNeeded = parseQuantityToGrams(ing.quantity).grams ?? (packGrams !== null ? packGrams * 0.1 : null);
+    const gramsNeeded = parseQuantityToGrams(ing.quantity, ing.generic_name).grams ?? (packGrams !== null ? packGrams * 0.1 : null);
     const gramsPurchased = packGrams !== null ? packGrams * packs : null;
 
     const marginal =

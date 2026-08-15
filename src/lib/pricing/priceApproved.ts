@@ -67,7 +67,7 @@ export async function priceApprovedMeals(): Promise<PriceApprovedResult> {
     // approved queue isn't dozens of real shopping trips; serving is.
     for (const ing of ingredients) {
       if (ing.skuPrice !== null) continue; // already priced from a prior run
-      const cost = adapter.costForQuantity(matches.get(ing.genericName) ?? null, ing.quantity);
+      const cost = adapter.costForQuantity(matches.get(ing.genericName) ?? null, ing.quantity, ing.genericName);
 
       if (cost.firstShopPrice !== null) {
         await db
@@ -91,7 +91,7 @@ export async function priceApprovedMeals(): Promise<PriceApprovedResult> {
         // than leaving this meal's total incomplete. Estimates are pack
         // prices, so prorate them the same way a real match would be.
         const packPrice = estimateIngredientPriceGBP(ing.genericName);
-        const parsed = parseQuantityToGrams(ing.quantity);
+        const parsed = parseQuantityToGrams(ing.quantity, ing.genericName);
         const assumedPackGrams = 400;
         const gramsNeeded = parsed.grams ?? assumedPackGrams * 0.1;
         const fraction = Math.min(1, gramsNeeded / assumedPackGrams);

@@ -17,7 +17,6 @@ interface DemoMeal {
   description: string;
   primaryProtein: string;
   isClassic: boolean;
-  costTwoPerson: number;
   instructions: string[];
   ingredients: { name: string; quantity: string }[];
 }
@@ -29,7 +28,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Classic beef ragu over spaghetti.",
     primaryProtein: "beef",
     isClassic: true,
-    costTwoPerson: 4.8,
     instructions: [
       "Brown 400g beef mince in a large pan.",
       "Add chopped onion, carrot, celery and garlic, cook until soft.",
@@ -55,7 +53,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Slow-cooked chunks of beef in a rich ale gravy.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 6.5,
     instructions: [
       "Brown 500g diced beef shin in batches.",
       "Add onion, carrot and a bottle of ale, bring to a simmer.",
@@ -77,7 +74,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Pan-seared sirloin with hand-cut chips and peppercorn sauce.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 11.0,
     instructions: [
       "Cut and fry chips until golden.",
       "Season two sirloin steaks and sear 2-3 minutes each side.",
@@ -98,7 +94,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Spiced beef mince tacos with all the toppings.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 4.2,
     instructions: [
       "Fry 400g beef mince with taco seasoning.",
       "Warm taco shells or tortillas.",
@@ -120,7 +115,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Beef mince in gravy topped with creamy mashed potato.",
     primaryProtein: "beef",
     isClassic: true,
-    costTwoPerson: 4.5,
     instructions: [
       "Brown 400g beef mince with onion and carrot.",
       "Add stock and simmer 20 minutes.",
@@ -143,7 +137,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Quick sliced beef and vegetable stir fry.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 5.8,
     instructions: [
       "Slice 350g beef strips thinly, marinate in soy sauce.",
       "Stir fry beef in a hot wok until browned, set aside.",
@@ -162,7 +155,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Layered pasta bake with beef ragu and bechamel.",
     primaryProtein: "beef",
     isClassic: true,
-    costTwoPerson: 6.0,
     instructions: [
       "Make a beef ragu as for bolognese.",
       "Make a bechamel sauce with butter, flour and milk.",
@@ -188,7 +180,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Smoky beef and kidney bean chilli.",
     primaryProtein: "beef",
     isClassic: true,
-    costTwoPerson: 4.0,
     instructions: [
       "Brown 400g beef mince with onion and garlic.",
       "Add chilli powder, cumin, chopped tomatoes and kidney beans.",
@@ -212,7 +203,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Rich Thai-style coconut curry with tender beef.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 8.5,
     instructions: [
       "Brown 500g diced beef, set aside.",
       "Fry massaman paste, add coconut milk, beef and potatoes.",
@@ -233,7 +223,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Homemade beef patties in brioche buns.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 5.5,
     instructions: [
       "Shape 400g beef mince into two patties, season well.",
       "Fry or grill 4 minutes each side, add cheese to melt.",
@@ -254,7 +243,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Fillet beef wrapped in mushroom duxelles and puff pastry.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 14.0,
     instructions: [
       "Sear a beef fillet on all sides, cool.",
       "Wrap in mushroom duxelles, parma ham and puff pastry.",
@@ -276,7 +264,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Sticky soy beef with broccoli over noodles.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 5.6,
     instructions: [
       "Marinate 350g sliced beef in soy, cornflour and ginger.",
       "Fry beef until browned, add broccoli and a sticky soy sauce.",
@@ -299,7 +286,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Creamy spiced curry with grilled chicken.",
     primaryProtein: "chicken",
     isClassic: true,
-    costTwoPerson: 6.2,
     instructions: [
       "Marinate 500g diced chicken thigh in yoghurt and tikka spices for 30 minutes.",
       "Grill or pan-fry until charred and cooked through.",
@@ -326,7 +312,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Whole roast chicken with all the trimmings.",
     primaryProtein: "chicken",
     isClassic: true,
-    costTwoPerson: 9.4,
     instructions: [
       "Roast a whole chicken at 200C for around 90 minutes.",
       "Roast potatoes in the fat for the last hour.",
@@ -349,7 +334,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Sizzling chicken and peppers with warm tortillas.",
     primaryProtein: "chicken",
     isClassic: true,
-    costTwoPerson: 5.4,
     instructions: [
       "Slice 400g chicken breast and mixed peppers.",
       "Fry with fajita seasoning until chicken is cooked through.",
@@ -370,7 +354,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Crispy breaded chicken with a mild curry sauce.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 6.8,
     instructions: [
       "Coat two chicken breasts in flour, egg and panko breadcrumbs.",
       "Fry until golden and cooked through, slice.",
@@ -394,7 +377,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "One-tray roasted chicken thighs with lemon and potatoes.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 4.6,
     instructions: [
       "Toss chicken thighs, halved potatoes and lemon wedges in oil and herbs.",
       "Roast at 200C for 40-45 minutes until golden.",
@@ -414,7 +396,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Grilled chicken over crisp lettuce with Caesar dressing.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 5.2,
     instructions: [
       "Grill two seasoned chicken breasts, slice.",
       "Toss romaine lettuce with Caesar dressing, croutons and parmesan.",
@@ -435,7 +416,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Spicy grilled chicken with a peri peri glaze.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 6.0,
     instructions: [
       "Marinate chicken thighs in peri peri sauce for at least 20 minutes.",
       "Grill or bake until charred and cooked through.",
@@ -454,7 +434,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Comforting broth with chicken, noodles and vegetables.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 3.8,
     instructions: [
       "Simmer chicken thighs in stock with carrot and celery until cooked.",
       "Shred the chicken, return to the pot with noodles.",
@@ -474,7 +453,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Slow-cooked shredded chicken in smoky BBQ sauce.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 5.9,
     instructions: [
       "Slow-cook chicken thighs with BBQ sauce and stock for 3-4 hours.",
       "Shred the chicken and mix back through the sauce.",
@@ -493,7 +471,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Quick fried rice with chicken, egg and vegetables.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 4.1,
     instructions: [
       "Fry diced chicken until cooked, set aside.",
       "Scramble an egg in the same pan, add cooked rice and vegetables.",
@@ -514,7 +491,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "French braised chicken in red wine with mushrooms and bacon.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 9.8,
     instructions: [
       "Brown chicken thighs and lardons in a casserole.",
       "Add shallots, mushrooms, red wine and stock.",
@@ -537,7 +513,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Sticky honey garlic glazed chicken thighs.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 4.4,
     instructions: [
       "Sear chicken thighs skin-side down until golden.",
       "Add honey, soy sauce and garlic, simmer until sticky and cooked through.",
@@ -561,7 +536,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Pork sausages with creamy mash and onion gravy.",
     primaryProtein: "pork",
     isClassic: true,
-    costTwoPerson: 3.9,
     instructions: [
       "Grill or fry 6 pork sausages until browned and cooked through.",
       "Boil and mash potatoes with butter and milk.",
@@ -582,7 +556,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Slow-cooked shredded pork shoulder in barbecue buns.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 6.3,
     instructions: [
       "Slow-cook pork shoulder with BBQ rub for 4-5 hours until tender.",
       "Shred the pork and mix with BBQ sauce.",
@@ -602,7 +575,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Steamed bao buns filled with crispy pork belly.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 8.2,
     instructions: [
       "Roast pork belly slices until crispy.",
       "Steam bao buns according to packet instructions.",
@@ -621,7 +593,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Crispy pork with pineapple in a tangy sauce.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 5.7,
     instructions: [
       "Coat diced pork loin in cornflour and fry until crisp.",
       "Stir fry peppers and pineapple, add sweet and sour sauce.",
@@ -642,7 +613,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Pork sausages baked in a golden Yorkshire pudding batter.",
     primaryProtein: "pork",
     isClassic: true,
-    costTwoPerson: 4.3,
     instructions: [
       "Brown 6 sausages in a hot ovenproof pan with oil.",
       "Pour over a batter of flour, eggs and milk.",
@@ -662,7 +632,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Pan-fried pork chops with a classic apple sauce.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 5.9,
     instructions: [
       "Season and pan-fry two pork chops until cooked through.",
       "Simmer chopped apple with a little sugar and water until soft.",
@@ -682,7 +651,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Smoky chorizo simmered with butter beans and tomatoes.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 4.1,
     instructions: [
       "Fry sliced chorizo until it releases its oils.",
       "Add onion, garlic, chopped tomatoes and butter beans.",
@@ -702,7 +670,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Crispy breaded pork loin with a mild curry sauce.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 6.4,
     instructions: [
       "Coat pork loin steaks in flour, egg and panko breadcrumbs.",
       "Fry until golden and cooked through, slice.",
@@ -725,7 +692,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Creamy pasta with crispy bacon, egg and parmesan.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 5.5,
     instructions: [
       "Cook 300g spaghetti until al dente.",
       "Fry bacon lardons until crisp.",
@@ -745,7 +711,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Roasted pork tenderloin glazed with honey and mustard.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 8.9,
     instructions: [
       "Sear a pork tenderloin on all sides.",
       "Brush with honey mustard glaze, roast at 200C for 20 minutes.",
@@ -767,7 +732,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Spiced lamb koftas with flatbread and yoghurt sauce.",
     primaryProtein: "lamb",
     isClassic: true,
-    costTwoPerson: 6.9,
     instructions: [
       "Mix lamb mince with cumin, coriander and garlic, shape into koftas.",
       "Grill or fry until cooked through.",
@@ -791,7 +755,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Lamb mince in gravy topped with creamy mashed potato.",
     primaryProtein: "lamb",
     isClassic: true,
-    costTwoPerson: 5.8,
     instructions: [
       "Brown 400g lamb mince with onion and carrot.",
       "Add stock and Worcestershire sauce, simmer 20 minutes.",
@@ -814,7 +777,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Slow-cooked lamb curry in a rich tomato and spice sauce.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 8.6,
     instructions: [
       "Brown 500g diced lamb shoulder, set aside.",
       "Fry onion, garlic, ginger and rogan josh spices.",
@@ -837,7 +799,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Melt-in-the-mouth lamb shoulder roasted low and slow.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 13.5,
     instructions: [
       "Rub a lamb shoulder with garlic, rosemary and oil.",
       "Roast at 150C for 4-5 hours until falling apart.",
@@ -857,7 +818,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Lamb koftas simmered in a spiced curry sauce.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 7.2,
     instructions: [
       "Shape spiced lamb mince into koftas, fry until browned.",
       "Make a curry sauce with onion, garlic and tomatoes.",
@@ -880,7 +840,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Grilled marinated lamb skewers with pitta and tzatziki.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 6.6,
     instructions: [
       "Marinate cubed lamb leg in lemon, garlic and oregano.",
       "Skewer and grill until charred and cooked through.",
@@ -902,7 +861,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Juicy lamb patties with fresh mint and feta.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 6.1,
     instructions: [
       "Mix lamb mince with chopped mint, garlic and crumbled feta.",
       "Shape into patties and grill or fry until cooked through.",
@@ -925,7 +883,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Fragrant slow-cooked lamb with apricots and spices.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 9.9,
     instructions: [
       "Brown diced lamb shoulder with onion and Moroccan spices.",
       "Add stock, dried apricots and chickpeas.",
@@ -952,7 +909,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Hearty bean and lentil chilli.",
     primaryProtein: "lentils",
     isClassic: true,
-    costTwoPerson: 3.1,
     instructions: [
       "Fry onion, pepper and garlic until soft.",
       "Add chilli powder, cumin, tinned tomatoes, kidney beans and lentils.",
@@ -977,7 +933,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Beer-battered fish with chunky chips.",
     primaryProtein: "fish",
     isClassic: true,
-    costTwoPerson: 7.5,
     instructions: [
       "Cut potatoes into chips, parboil, then roast or fry until golden.",
       "Make a beer batter and coat two fish fillets.",
@@ -998,7 +953,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Pan-glazed salmon fillets with a sticky teriyaki sauce.",
     primaryProtein: "fish",
     isClassic: false,
-    costTwoPerson: 8.8,
     instructions: [
       "Pan-fry two salmon fillets skin-side down until crisp.",
       "Add teriyaki sauce, glaze the salmon as it finishes cooking.",
@@ -1017,7 +971,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Garlicky prawns tossed with linguine and chilli.",
     primaryProtein: "prawns",
     isClassic: false,
-    costTwoPerson: 9.2,
     instructions: [
       "Cook 250g linguine until al dente.",
       "Fry king prawns with garlic, chilli and butter.",
@@ -1038,7 +991,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Lean turkey meatballs in a tomato sauce.",
     primaryProtein: "turkey",
     isClassic: false,
-    costTwoPerson: 4.7,
     instructions: [
       "Shape turkey mince with breadcrumbs and herbs into meatballs.",
       "Fry until browned, then simmer in tomato sauce for 15 minutes.",
@@ -1060,7 +1012,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Quick veg and tofu stir fry with soy-ginger sauce.",
     primaryProtein: "tofu",
     isClassic: false,
-    costTwoPerson: 3.6,
     instructions: [
       "Press and cube 400g firm tofu, fry until golden.",
       "Stir fry mixed vegetables in a hot wok.",
@@ -1082,7 +1033,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Grilled halloumi with roasted vegetables and grains.",
     primaryProtein: "halloumi",
     isClassic: false,
-    costTwoPerson: 5.3,
     instructions: [
       "Roast mixed vegetables at 200C for 25 minutes.",
       "Grill sliced halloumi until golden.",
@@ -1102,7 +1052,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Creamy arborio rice with mushrooms and parmesan.",
     primaryProtein: "mushroom",
     isClassic: false,
-    costTwoPerson: 5.1,
     instructions: [
       "Fry mushrooms and onion, set mushrooms aside.",
       "Toast arborio rice, gradually add hot stock, stirring until creamy.",
@@ -1126,7 +1075,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Sweet-savoury marinated beef, seared fast and served over rice.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 7.4,
     instructions: [
       "Marinate thinly sliced beef sirloin in soy, pear or apple, garlic, ginger and sesame oil for 30 minutes.",
       "Sear in a very hot pan or wok in batches until caramelised at the edges.",
@@ -1150,7 +1098,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Indonesian slow-cooked beef in a deeply spiced coconut sauce.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 8.3,
     instructions: [
       "Blend lemongrass, shallots, garlic, chilli and galangal into a paste.",
       "Fry the paste, add diced beef shin, coconut milk and kaffir lime leaves.",
@@ -1174,7 +1121,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Fragrant beef noodle soup with star anise and fresh herbs.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 6.7,
     instructions: [
       "Simmer beef stock with charred onion, ginger, star anise and cinnamon for 30 minutes.",
       "Cook rice noodles and thinly slice raw beef sirloin.",
@@ -1197,7 +1143,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Classic French braise of beef in red wine with bacon and pearl onions.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 9.1,
     instructions: [
       "Brown diced beef chuck in batches, set aside.",
       "Fry bacon lardons and pearl onions, add mushrooms and garlic.",
@@ -1220,7 +1165,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Zesty seared beef salad with lime, chilli and fresh herbs.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 6.9,
     instructions: [
       "Sear a sirloin steak to medium-rare, rest and slice thinly.",
       "Whisk lime juice, fish sauce, sugar and chilli for the dressing.",
@@ -1244,7 +1188,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Japanese-style grilled beef skewers with a sweet soy glaze.",
     primaryProtein: "beef",
     isClassic: false,
-    costTwoPerson: 7.0,
     instructions: [
       "Cube beef sirloin and thread onto skewers with spring onion.",
       "Marinate briefly in soy, mirin, sake and sugar.",
@@ -1267,7 +1210,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Spiced chicken thighs, charred and wrapped with garlic sauce.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 5.6,
     instructions: [
       "Marinate chicken thighs in shawarma spices, yoghurt, garlic and lemon.",
       "Roast or grill until charred and cooked through, slice.",
@@ -1290,7 +1232,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Fragrant coconut curry with chicken, aubergine and Thai basil.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 6.3,
     instructions: [
       "Fry green curry paste until fragrant.",
       "Add coconut milk, sliced chicken thigh and aubergine, simmer 15 minutes.",
@@ -1311,7 +1252,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Caribbean spiced chicken with a fiery, fragrant marinade.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 5.5,
     instructions: [
       "Blend scotch bonnet, allspice, thyme, garlic and lime for the marinade.",
       "Marinate chicken thighs for at least an hour, ideally overnight.",
@@ -1333,7 +1273,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Filipino braised chicken in soy, vinegar and garlic.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 4.9,
     instructions: [
       "Combine chicken thighs, soy sauce, vinegar, garlic and bay leaves in a pot.",
       "Simmer 30-40 minutes until chicken is tender and sauce has reduced.",
@@ -1353,7 +1292,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Silky, mildly spiced tomato and butter curry.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 6.5,
     instructions: [
       "Marinate diced chicken thigh in yoghurt and garam masala.",
       "Grill or pan-fry until charred, set aside.",
@@ -1375,7 +1313,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Breaded chicken breast topped with tomato sauce and melted mozzarella.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 6.1,
     instructions: [
       "Coat chicken breasts in flour, egg and breadcrumbs, fry until golden.",
       "Top with tomato sauce and mozzarella, bake at 200C for 10 minutes.",
@@ -1396,7 +1333,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Poached chicken with fragrant rice cooked in the poaching broth.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 5.2,
     instructions: [
       "Gently poach a whole chicken in ginger and spring onion stock until just cooked.",
       "Cook rice in the poaching broth with garlic and ginger.",
@@ -1417,7 +1353,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Crispy fried chicken with a fiery cayenne butter glaze.",
     primaryProtein: "chicken",
     isClassic: false,
-    costTwoPerson: 6.0,
     instructions: [
       "Marinate chicken thighs in buttermilk, then coat in seasoned flour.",
       "Fry until deeply golden and cooked through.",
@@ -1441,7 +1376,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Spicy-sweet gochujang pork, stir-fried fast and hot.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 5.9,
     instructions: [
       "Marinate thinly sliced pork shoulder in gochujang, soy, garlic and sugar.",
       "Stir fry in a very hot pan until caramelised.",
@@ -1463,7 +1397,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Sticky Cantonese barbecue pork with a lacquered glaze.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 7.2,
     instructions: [
       "Marinate pork shoulder strips in char siu sauce, honey and five spice overnight.",
       "Roast at 200C, basting regularly, until sticky and caramelised.",
@@ -1483,7 +1416,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Herb and garlic stuffed rolled pork roast with crackling.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 9.6,
     instructions: [
       "Butterfly a pork joint, stuff with garlic, rosemary, fennel seed and lemon zest.",
       "Roll and tie, score the skin well, roast at high heat then lower to finish.",
@@ -1504,7 +1436,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Citrus and garlic marinated pork, slow-cooked until falling apart.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 6.8,
     instructions: [
       "Marinate pork shoulder in orange juice, lime juice, garlic and cumin.",
       "Slow-cook for 4-5 hours until tender enough to shred.",
@@ -1525,7 +1456,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Rich pork broth ramen with soft egg and spring onion.",
     primaryProtein: "pork",
     isClassic: false,
-    costTwoPerson: 6.4,
     instructions: [
       "Simmer pork belly slices in a rich stock with soy, garlic and ginger for 30 minutes.",
       "Soft-boil eggs and cook ramen noodles.",
@@ -1549,7 +1479,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Layered spiced rice and lamb, slow-cooked until fragrant.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 8.4,
     instructions: [
       "Marinate diced lamb shoulder in yoghurt and biryani spices.",
       "Brown the lamb, then layer with part-cooked basmati rice and fried onions.",
@@ -1570,7 +1499,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Spiced shaved lamb in warm flatbread with salad and chilli sauce.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 6.3,
     instructions: [
       "Marinate thin lamb steaks in cumin, paprika and garlic.",
       "Griddle hot and fast, then slice thinly.",
@@ -1592,7 +1520,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Fiery, tangy Goan lamb curry with vinegar and chilli.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 7.9,
     instructions: [
       "Marinate diced lamb shoulder in vinegar, chilli and vindaloo spices.",
       "Brown the lamb, add onions, tomatoes and marinade, simmer 1.5 hours.",
@@ -1615,7 +1542,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "French lamb stew with baby vegetables in a rich broth.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 8.7,
     instructions: [
       "Brown diced lamb shoulder, set aside.",
       "Fry onion and garlic, add stock, tomato puree and lamb, simmer 1 hour.",
@@ -1638,7 +1564,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Grilled lamb chops with a punchy herb and garlic sauce.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 9.8,
     instructions: [
       "Season lamb chops well and grill 3-4 minutes per side.",
       "Blend parsley, garlic, red wine vinegar, chilli and oil for the chimichurri.",
@@ -1659,7 +1584,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Greek slow-roasted lamb with lemon, garlic and oregano.",
     primaryProtein: "lamb",
     isClassic: false,
-    costTwoPerson: 10.2,
     instructions: [
       "Marinate a lamb shoulder joint in lemon juice, garlic and oregano.",
       "Wrap tightly in foil with potatoes and roast low and slow for 3-4 hours.",
@@ -1682,7 +1606,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Shredded crispy duck with pancakes, cucumber and hoisin.",
     primaryProtein: "duck",
     isClassic: false,
-    costTwoPerson: 9.5,
     instructions: [
       "Rub duck legs with five spice and salt, roast slow until crisp and tender.",
       "Shred the meat, warm Chinese pancakes.",
@@ -1702,7 +1625,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Pan-seared duck breast with a glossy orange sauce.",
     primaryProtein: "duck",
     isClassic: false,
-    costTwoPerson: 11.5,
     instructions: [
       "Score duck breast skin, sear skin-side down until crisp, finish in the oven.",
       "Make a sauce with orange juice, zest, stock and a touch of sugar.",
@@ -1722,7 +1644,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Rich, gamey venison braised with root vegetables and red wine.",
     primaryProtein: "venison",
     isClassic: false,
-    costTwoPerson: 10.8,
     instructions: [
       "Brown diced venison shoulder in batches, set aside.",
       "Fry onion, carrot and celery, add red wine, stock and juniper berries.",
@@ -1745,7 +1666,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Saffron rice with prawns, mussels and chorizo.",
     primaryProtein: "seafood",
     isClassic: false,
-    costTwoPerson: 10.9,
     instructions: [
       "Fry chorizo and onion in a wide pan, add rice and saffron-infused stock.",
       "Simmer without stirring, nestling in mussels and prawns for the last 10 minutes.",
@@ -1768,7 +1688,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Crispy battered fish tacos with a zingy slaw.",
     primaryProtein: "fish",
     isClassic: false,
-    costTwoPerson: 6.6,
     instructions: [
       "Coat fish goujons in seasoned flour and fry until crisp.",
       "Toss shredded cabbage and carrot with lime juice and a little mayo for slaw.",
@@ -1791,7 +1710,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Sweet miso-marinated cod, grilled until caramelised.",
     primaryProtein: "fish",
     isClassic: false,
-    costTwoPerson: 12.0,
     instructions: [
       "Marinate cod fillets in white miso, mirin, sake and sugar for at least 2 hours.",
       "Grill or broil until caramelised and just cooked through.",
@@ -1812,7 +1730,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Pan-seared scallops in a garlic and herb butter sauce.",
     primaryProtein: "seafood",
     isClassic: false,
-    costTwoPerson: 13.5,
     instructions: [
       "Pat scallops dry and sear in a very hot pan, 90 seconds per side.",
       "Add butter, garlic and parsley to the pan, baste the scallops.",
@@ -1832,7 +1749,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Charred paneer in a creamy spiced tomato sauce.",
     primaryProtein: "paneer",
     isClassic: false,
-    costTwoPerson: 5.4,
     instructions: [
       "Marinate cubed paneer in yoghurt and tikka spices, grill until charred.",
       "Make a sauce with onion, garlic, tomatoes and cream.",
@@ -1855,7 +1771,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Young jackfruit simmered in a warming coconut curry sauce.",
     primaryProtein: "jackfruit",
     isClassic: false,
-    costTwoPerson: 4.5,
     instructions: [
       "Fry onion, garlic, ginger and curry spices until fragrant.",
       "Add tinned jackfruit and coconut milk, simmer 20 minutes, shredding the jackfruit as it softens.",
@@ -1878,7 +1793,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Crispy falafel with hummus, salad and warm flatbread.",
     primaryProtein: "chickpeas",
     isClassic: false,
-    costTwoPerson: 4.8,
     instructions: [
       "Blend chickpeas, herbs, garlic and spices, shape into falafel and fry until crisp.",
       "Assemble bowls with hummus, salad, pickles and falafel.",
@@ -1902,7 +1816,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Layered fried aubergine, tomato sauce and melted cheese.",
     primaryProtein: "aubergine",
     isClassic: false,
-    costTwoPerson: 5.0,
     instructions: [
       "Fry sliced aubergine until golden.",
       "Layer with tomato sauce, mozzarella and parmesan in a dish.",
@@ -1922,7 +1835,6 @@ const DEMO_MEALS: DemoMeal[] = [
     description: "Coconut red lentil dhal with warming curry spices.",
     primaryProtein: "lentils",
     isClassic: false,
-    costTwoPerson: 3.3,
     instructions: [
       "Fry onion, garlic, ginger, mustard seeds and curry leaves.",
       "Add red lentils, coconut milk and water, simmer 20 minutes until creamy.",
@@ -1979,9 +1891,7 @@ async function seed() {
     }
 
     // Deliberately no cost/tier here — meals start unpriced (NULL) and only
-    // get a real cost/tier from priceApprovedMeals() (real Pepesto pricing).
-    // DEMO_MEALS' costTwoPerson is kept only as an authoring-time reference
-    // for roughly which tier a dish should land in, never written to the DB.
+    // get a real cost/tier from priceApprovedMeals() (real pricing data).
     const [inserted] = await db
       .insert(meals)
       .values({

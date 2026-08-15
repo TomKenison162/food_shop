@@ -8,6 +8,7 @@ import {
   timestamp,
   varchar,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const tierEnum = pgEnum("tier", ["budget", "standard", "gourmet"]);
@@ -105,27 +106,45 @@ export const approvedQueue = pgTable("approved_queue", {
  * `accepted` is NULL until the Yes/No link in that day's email is clicked;
  * rows with a non-NULL value are exactly the model's labelled examples.
  */
-export const mealHistory = pgTable("meal_history", {
-  id: serial("id").primaryKey(),
-  mealId: integer("meal_id")
-    .notNull()
-    .references(() => meals.id, { onDelete: "cascade" }),
-  primaryProtein: varchar("primary_protein", { length: 100 }).notNull(),
-  servedDate: varchar("served_date", { length: 10 }).notNull().unique(), // YYYY-MM-DD, Europe/London
-  portions: integer("portions").notNull().default(2),
-  costIncurred: numeric("cost_incurred", { precision: 8, scale: 2 }),
-  // --- context snapshot, used as ML features ---
-  dayOfWeek: integer("day_of_week"), // 0=Sunday .. 6=Saturday
-  isWeekend: boolean("is_weekend"),
-  temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }),
-  pantryOverlapGrams: numeric("pantry_overlap_grams", { precision: 8, scale: 1 }),
-  daysSinceLastServed: integer("days_since_last_served"),
-  proteinDaysSinceLastServed: integer("protein_days_since_last_served"),
-  ingredientsCount: integer("ingredients_count"),
-  // --- label ---
-  accepted: boolean("accepted"),
-  respondedAt: timestamp("responded_at", { withTimezone: true }),
-});
+export const mealHistory = pgTable(
+  "meal_history",
+  {
+    id: serial("id").primaryKey(),
+    mealId: integer("meal_id")
+      .notNull()
+      .references(() => meals.id, { onDelete: "cascade" }),
+    primaryProtein: varchar("primary_protein", { length: 100 }).notNull(),
+    servedDate: varchar("served_date", { length: 10 }).notNull(), // YYYY-MM-DD, Europe/London
+    portions: integer("portions").notNull().default(2),
+    costIncurred: numeric("cost_incurred", { precision: 8, scale: 2 }),
+    /** First-shop cost of the same meal, so the email can show what the till actually charges. */
+    firstShopCost: numeric("first_shop_cost", { precision: 8, scale: 2 }),
+    // --- context snapshot, used as ML features ---
+    dayOfWeek: integer("day_of_week"), // 0=Sunday .. 6=Saturday
+    isWeekend: boolean("is_weekend"),
+    temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }),
+    pantryOverlapGrams: numeric("pantry_overlap_grams", { precision: 8, scale: 1 }),
+    daysSinceLastServed: integer("days_since_last_served"),
+    proteinDaysSinceLastServed: integer("protein_days_since_last_served"),
+    ingredientsCount: integer("ingredients_count"),
+    // --- label ---
+    accepted: boolean("accepted"),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    /** Set once the reminder for this date has gone out, so hourly polling can't re-send. */
+    emailedAt: timestamp("emailed_at", { withTimezone: true }),
+    /**
+     * Set when the suggestion was declined and replaced. The superseded row
+     * keeps its `accepted: false` label (it's a real training example) while
+     * a fresh row becomes the live plan for that date — which is why
+     * servedDate is indexed rather than unique. "The meal for date D" always
+     * means the row where supersededAt IS NULL.
+     */
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+  },
+  (t) => ({
+    servedDateIdx: index("meal_history_served_date_idx").on(t.servedDate),
+  })
+);
 
 /**
  * Singleton (id=1) row of user-level preferences. Just `portions` for now —
@@ -136,6 +155,12 @@ export const mealHistory = pgTable("meal_history", {
 export const userSettings = pgTable("user_settings", {
   id: serial("id").primaryKey(),
   portions: integer("portions").notNull().default(2),
+  /**
+   * Inclusive YYYY-MM-DD through which reminders are suspended (holidays).
+   * Without this, a week away produces a run of "No" replies that mean "I'm
+   * not home" — which the model would learn as "dislikes these meals".
+   */
+  pausedUntil: varchar("paused_until", { length: 10 }),
 });
 
 /**
@@ -143,6 +168,11 @@ export const userSettings = pgTable("user_settings", {
  * recipe needs 400g chicken thighs but the matched SKU is a 500g pack —
  * 100g left over). Future meal selection prioritizes using this up in a
  * *different* dish before it's suggested again.
+ *
+ * Everything here expires: real food goes off, and stock that never ages
+ * out would have the app confidently telling you not to buy chicken
+ * because of a pack opened three weeks ago. See SHELF_LIFE_DAYS in
+ * src/lib/pantry/shelfLife.ts.
  */
 export const pantryItems = pgTable("pantry_items", {
   id: serial("id").primaryKey(),
@@ -150,6 +180,8 @@ export const pantryItems = pgTable("pantry_items", {
   gramsRemaining: numeric("grams_remaining", { precision: 8, scale: 1 }).notNull(),
   sourceMealId: integer("source_meal_id").references(() => meals.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** YYYY-MM-DD after which this stock is treated as gone. */
+  expiresOn: varchar("expires_on", { length: 10 }),
 });
 
 /**

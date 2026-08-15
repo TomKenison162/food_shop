@@ -1,9 +1,16 @@
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lt, or, isNull } from "drizzle-orm";
 import { db } from "../db/client";
 import { pantryItems, mealIngredients } from "../db/schema";
 import { parseQuantityToGrams } from "../pricing/quantity";
+import { shelfLifeDays } from "./shelfLife";
+import { addDaysToDateString, londonDateString } from "../date";
 
 const MIN_LEFTOVER_GRAMS = 20; // ignore trivial scraps
+
+/** Only stock that hasn't passed its expiry date counts as available. */
+function notExpired(today: string) {
+  return or(isNull(pantryItems.expiresOn), gte(pantryItems.expiresOn, today));
+}
 
 /**
  * Records leftover stock for a meal actually served tonight — e.g. a
@@ -12,26 +19,35 @@ const MIN_LEFTOVER_GRAMS = 20; // ignore trivial scraps
  * at pricing time. Called from rotation.ts only when a meal is genuinely
  * selected for a real day — deliberately NOT called from the pricing step
  * itself, since pricing the whole approved queue isn't real shopping trips.
+ *
+ * Each entry gets an expiry from its ingredient's shelf life, and topping up
+ * an existing entry resets the clock (you just opened a fresh pack).
  */
 export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<void> {
   const ingredients = await db.query.mealIngredients.findMany({ where: eq(mealIngredients.mealId, mealId) });
+  const today = londonDateString();
 
   for (const ing of ingredients) {
     if (ing.gramsPurchased === null || ing.gramsNeeded === null) continue;
     const leftover = Number(ing.gramsPurchased) - Number(ing.gramsNeeded);
     if (leftover < MIN_LEFTOVER_GRAMS) continue;
 
+    const expiresOn = addDaysToDateString(today, shelfLifeDays(ing.genericName));
     const existing = await db.query.pantryItems.findFirst({
       where: eq(pantryItems.genericName, ing.genericName),
     });
 
     if (existing) {
+      // If the old stock had already expired, this is a fresh pack, not a top-up.
+      const stale = existing.expiresOn !== null && existing.expiresOn < today;
+      const carried = stale ? 0 : Number(existing.gramsRemaining);
       await db
         .update(pantryItems)
         .set({
-          gramsRemaining: String(Number(existing.gramsRemaining) + leftover),
+          gramsRemaining: String(carried + leftover),
           sourceMealId: mealId,
           updatedAt: new Date(),
+          expiresOn,
         })
         .where(eq(pantryItems.id, existing.id));
     } else {
@@ -39,6 +55,7 @@ export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<vo
         genericName: ing.genericName,
         gramsRemaining: String(leftover),
         sourceMealId: mealId,
+        expiresOn,
       });
     }
   }
@@ -65,7 +82,7 @@ export async function consumePantryForMeal(mealId: number): Promise<void> {
     const used =
       ing.gramsNeeded !== null
         ? Number(ing.gramsNeeded)
-        : parseQuantityToGrams(ing.quantity).grams ?? 0;
+        : parseQuantityToGrams(ing.quantity, ing.genericName).grams ?? 0;
 
     const remaining = Math.max(0, Number(existing.gramsRemaining) - used);
     await db
@@ -75,28 +92,49 @@ export async function consumePantryForMeal(mealId: number): Promise<void> {
   }
 }
 
+/** Clears out expired and empty entries. Safe to call often. */
+export async function purgeStalePantryItems(today = londonDateString()): Promise<number> {
+  const removed = await db
+    .delete(pantryItems)
+    .where(or(lt(pantryItems.expiresOn, today), lt(pantryItems.gramsRemaining, "1")))
+    .returning({ id: pantryItems.id });
+  return removed.length;
+}
+
 export interface PantrySummaryItem {
   genericName: string;
   gramsRemaining: number;
   /** Rough "how many more portions" estimate, assuming ~150g protein/portion. */
   estimatedPortionsRemaining: number;
+  expiresOn: string | null;
+  /** Days until expiry; negative would mean expired, but expired rows are filtered out. */
+  daysLeft: number | null;
 }
 
-export async function getPantrySummary(): Promise<PantrySummaryItem[]> {
-  const rows = await db.select().from(pantryItems).where(gt(pantryItems.gramsRemaining, "0"));
+export async function getPantrySummary(today = londonDateString()): Promise<PantrySummaryItem[]> {
+  const rows = await db
+    .select()
+    .from(pantryItems)
+    .where(and(gt(pantryItems.gramsRemaining, "0"), notExpired(today)));
+
   return rows.map((r) => ({
     genericName: r.genericName,
     gramsRemaining: Number(r.gramsRemaining),
     estimatedPortionsRemaining: Math.floor(Number(r.gramsRemaining) / 150),
+    expiresOn: r.expiresOn,
+    daysLeft:
+      r.expiresOn !== null
+        ? Math.round((Date.parse(r.expiresOn) - Date.parse(today)) / (1000 * 60 * 60 * 24))
+        : null,
   }));
 }
 
 /**
- * How many grams of pantry stock a candidate meal would use up, matched by
- * generic ingredient name. Used to bias meal selection toward using up what
- * was already bought instead of buying something new.
+ * How many grams of unexpired pantry stock a candidate meal would use up,
+ * matched by generic ingredient name. Used to bias meal selection toward
+ * using up what was already bought instead of buying something new.
  */
-export async function pantryOverlapGrams(mealId: number): Promise<number> {
+export async function pantryOverlapGrams(mealId: number, today = londonDateString()): Promise<number> {
   const ingredients = await db.query.mealIngredients.findMany({
     where: eq(mealIngredients.mealId, mealId),
   });
@@ -106,7 +144,9 @@ export async function pantryOverlapGrams(mealId: number): Promise<number> {
   const rows = await db
     .select()
     .from(pantryItems)
-    .where(and(inArray(pantryItems.genericName, names), gt(pantryItems.gramsRemaining, "0")));
+    .where(
+      and(inArray(pantryItems.genericName, names), gt(pantryItems.gramsRemaining, "0"), notExpired(today))
+    );
 
   return rows.reduce((sum, r) => sum + Number(r.gramsRemaining), 0);
 }

@@ -8,7 +8,8 @@
  *     returns the best-matched SKU + price-per-pack + pack size for each.
  *     Callers should dedupe names across the *entire* approved queue
  *     before calling this once (or a few batched times), not per meal.
- *  2. costForQuantity(match, requestedQuantity): pure local math — turns a
+ *  2. costForQuantity(match, requestedQuantity, ingredientName): pure local
+ *     math — turns a
  *     shared match + a specific dish's requested quantity ("400g") into
  *     that dish's cost. No API call.
  *
@@ -39,7 +40,11 @@ export interface QuantityCost {
 
 export interface PricingAdapter {
   matchProducts(names: string[]): Promise<Map<string, MatchedProduct | null>>;
-  costForQuantity(match: MatchedProduct | null, requestedQuantity: string): QuantityCost;
+  costForQuantity(
+    match: MatchedProduct | null,
+    requestedQuantity: string,
+    ingredientName?: string
+  ): QuantityCost;
 }
 
 export const EMPTY_COST: QuantityCost = {
