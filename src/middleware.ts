@@ -53,6 +53,19 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next's own static assets and the PWA files.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-|apple-touch-icon|sw.js|workbox-).*)"],
+  /**
+   * Everything except Next's own static assets and the generated PWA files.
+   *
+   * These must be excluded, not merely allowed through: a service worker
+   * script that answers with a 307 to /login isn't JavaScript, so the
+   * browser fails registration and the PWA silently stops working. The
+   * PWA plugin emits several differently-named files (sw.js,
+   * swe-worker-<hash>.js, workbox-<hash>.js, worker-<hash>.js,
+   * fallback-<hash>.js) — note swe-worker- does NOT start with worker-, so
+   * it needs its own entry. None of them expose data, so serving them
+   * unauthenticated is correct.
+   */
+  matcher: [
+    "/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|icon-|apple-touch-icon|sw\\.js|swe-worker-|workbox-|worker-|fallback-).*)",
+  ],
 };
