@@ -52,9 +52,14 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
           const cachedNote = cached
             ? ` <strong>— likely already have ~${cached.gramsRemaining}g in your pantry, check before buying</strong>`
             : "";
+          const estimatedNote = i.isEstimated
+            ? ` <em style="color:#b45309">(estimated price, not from Sainsbury's — no product match)</em>`
+            : "";
           if (cached) usedInTonightsShop.add(i.genericName);
           return i.skuName && i.skuPrice
-            ? `<li>${i.skuName} — £${i.skuPrice} (${i.quantity} needed)${cachedNote}</li>`
+            ? `<li>${i.skuName} — £${i.skuPrice} (${i.quantity} needed)${cachedNote}${estimatedNote}</li>`
+            : i.skuPrice
+            ? `<li>${i.genericName} — £${i.skuPrice} (${i.quantity} needed)${cachedNote}${estimatedNote}</li>`
             : `<li>${i.genericName} — ${i.quantity} <em>(pricing not available yet)</em>${cachedNote}</li>`;
         })
         .join("")}</ul>`

@@ -44,6 +44,15 @@ export const mealIngredients = pgTable("meal_ingredients", {
   skuName: varchar("sku_name", { length: 300 }),
   skuPrice: numeric("sku_price", { precision: 8, scale: 2 }),
   skuUnitSize: varchar("sku_unit_size", { length: 100 }),
+  // Persisted from pricing so pantry leftovers can be recorded later, at
+  // serve time (see rotation.ts) — not at pricing time, since pricing the
+  // whole approved queue isn't 51 real shopping trips.
+  gramsPurchased: numeric("grams_purchased", { precision: 8, scale: 1 }),
+  gramsNeeded: numeric("grams_needed", { precision: 8, scale: 1 }),
+  // true when skuPrice is a hand-estimated guess (Pepesto had no match),
+  // not a real Sainsbury's price — surfaced in the email so guesses are
+  // never presented as real data. See src/lib/pricing/estimates.ts.
+  isEstimated: boolean("is_estimated").notNull().default(false),
 });
 
 /** The single user's swiped-right queue. */

@@ -4,25 +4,24 @@ import { pantryItems, mealIngredients } from "../db/schema";
 
 const MIN_LEFTOVER_GRAMS = 20; // ignore trivial scraps
 
-export interface PurchasedIngredient {
-  name: string;
-  gramsPurchased: number | null;
-  gramsNeeded: number | null;
-}
-
 /**
- * Records leftover stock from a meal's priced ingredients — e.g. a recipe
- * needs 400g chicken thighs but the matched pack was 500g: 100g leftover.
- * Called once, right after priceApprovedMeals prices a meal.
+ * Records leftover stock for a meal actually served tonight — e.g. a
+ * recipe needs 400g chicken thighs but the matched pack was 500g: 100g
+ * leftover. Reads gramsPurchased/gramsNeeded persisted on mealIngredients
+ * at pricing time. Called from rotation.ts only when a meal is genuinely
+ * selected for a real day — deliberately NOT called from the pricing step
+ * itself, since pricing the whole approved queue isn't real shopping trips.
  */
-export async function recordPurchaseLeftovers(mealId: number, priced: PurchasedIngredient[]): Promise<void> {
-  for (const ing of priced) {
+export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<void> {
+  const ingredients = await db.query.mealIngredients.findMany({ where: eq(mealIngredients.mealId, mealId) });
+
+  for (const ing of ingredients) {
     if (ing.gramsPurchased === null || ing.gramsNeeded === null) continue;
-    const leftover = ing.gramsPurchased - ing.gramsNeeded;
+    const leftover = Number(ing.gramsPurchased) - Number(ing.gramsNeeded);
     if (leftover < MIN_LEFTOVER_GRAMS) continue;
 
     const existing = await db.query.pantryItems.findFirst({
-      where: eq(pantryItems.genericName, ing.name),
+      where: eq(pantryItems.genericName, ing.genericName),
     });
 
     if (existing) {
@@ -36,7 +35,7 @@ export async function recordPurchaseLeftovers(mealId: number, priced: PurchasedI
         .where(eq(pantryItems.id, existing.id));
     } else {
       await db.insert(pantryItems).values({
-        genericName: ing.name,
+        genericName: ing.genericName,
         gramsRemaining: String(leftover),
         sourceMealId: mealId,
       });

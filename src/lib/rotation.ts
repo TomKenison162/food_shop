@@ -2,7 +2,7 @@ import { eq, gte, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { approvedQueue, meals, mealHistory } from "./db/schema";
 import { addDaysToDateString, isLondonWeekend, londonDateString, londonDayOfWeek } from "./date";
-import { consumePantryForMeal } from "./pantry/pantry";
+import { consumePantryForMeal, recordPurchaseLeftoversForMeal } from "./pantry/pantry";
 import { getCurrentTemperatureC } from "./weather/weather";
 import { scoreMealsForTonight } from "./ml/model";
 import { getPortionsSetting } from "./settings";
@@ -140,6 +140,7 @@ export async function selectTonightsDinner(now: Date = new Date()): Promise<Rota
     portions,
     costIncurred: cost !== null ? String(cost) : null,
   });
+  await recordPurchaseLeftoversForMeal(chosen.id);
   await consumePantryForMeal(chosen.id);
 
   return {
