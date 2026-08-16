@@ -80,3 +80,24 @@ describe("choosing between plausible products", () => {
     );
   });
 });
+
+describe("prepared form must match", () => {
+  // Each of these was a real reuse that made a line wrong, or dearer.
+  it("rejects whole seeds for a ground spice", () => {
+    expect(isPlausibleProduct("Natco Cumin Seeds 360g", "ground cumin")).toBe(false);
+  });
+
+  it("rejects oil spray for cooking oil", () => {
+    expect(isPlausibleProduct("Sainsbury's Air Fryer Oil Spray 200ml", "vegetable oil")).toBe(false);
+  });
+
+  it("rejects the fruit when the recipe wants the juice", () => {
+    expect(isPlausibleProduct("Sainsbury's Oranges 5 Pack", "orange juice")).toBe(false);
+    expect(isPlausibleProduct("Sainsbury's Pure Orange Juice 1L", "orange juice")).toBe(true);
+  });
+
+  it("still accepts the matching form", () => {
+    expect(isPlausibleProduct("Sainsbury's Ground Cumin 38g", "ground cumin")).toBe(true);
+    expect(isPlausibleProduct("Sainsbury's Vegetable Oil 1L", "vegetable oil")).toBe(true);
+  });
+});

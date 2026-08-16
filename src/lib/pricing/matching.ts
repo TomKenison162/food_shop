@@ -122,8 +122,25 @@ const CONFLICTS: { ingredient: RegExp; sku: RegExp }[] = [
   { ingredient: /\bbreasts?\b/, sku: /\blegs?\b|\bthighs?\b|\bwings?\b|\bdrumsticks?\b/ },
   { ingredient: /\blegs?\b|\bthighs?\b/, sku: /\bbreasts?\b/ },
 
+  // Prepared form matters as much as the ingredient. Ground spice is not
+  // whole seed (and cost 3x as much when swapped), and oil spray is not
+  // cooking oil.
+  { ingredient: /\bground \w+/, sku: /\bseeds?\b|\bwhole\b|\bsticks?\b|\bpods?\b/ },
+  { ingredient: /\bseeds?\b|\bsticks?\b/, sku: /\bground\b|\bpowder\b/ },
+  { ingredient: /\boils?\b/, sku: /spray|air fryer/ },
+
+  // A juice ingredient needs an actual juice, not the fruit it comes from.
+  { ingredient: /\bjuice\b/, sku: /^(?!.*\bjuice\b).*$/ },
+
   // Fresh vs preserved/processed forms price completely differently.
-  { ingredient: /^(?!.*juice).*\blimes?\b|\blemons?\b|\boranges?\b/, sku: /\bjuice\b|squash|cordial/ },
+  // The whole fruit is not its juice. The lookahead has to guard the entire
+  // alternation: written as `^(?!...)...\blimes?\b|\blemons?\b|...` the
+  // negation only bound to the first branch, so "orange juice" was rejected
+  // from matching orange juice.
+  {
+    ingredient: /^(?!.*\bjuice\b)(?=.*(\blimes?\b|\blemons?\b|\boranges?\b))/,
+    sku: /\bjuice\b|squash|cordial/,
+  },
 ];
 
 /**

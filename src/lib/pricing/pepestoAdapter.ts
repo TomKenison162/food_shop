@@ -18,6 +18,9 @@ import { isPlausibleProduct, matchesIngredient, scoreProductMatch } from "./matc
  */
 const MAX_NAMES_PER_REQUEST = 8;
 
+/** Transient 200-with-garbage responses are common enough to need retries. */
+const FETCH_ATTEMPTS = 3;
+
 /** See the clamp in computeQuantityCost — guards against quantity misparses. */
 const MAX_PACKS_PER_LINE = 8;
 
@@ -51,11 +54,22 @@ export class PepestoPricingAdapter implements PricingAdapter {
       chunks.push(names.slice(i, i + MAX_NAMES_PER_REQUEST));
     }
 
+    const missing: string[] = [];
+
     for (const chunk of chunks) {
       const data = await this.fetchProducts(chunk);
+      const items = data.items ?? [];
       for (const name of chunk) {
-        const match = data.items.find((item) => matchesIngredient(item.item_name, name));
-        const top = pickBestProduct(match?.products ?? [], name);
+        const item = items.find((i) => matchesIngredient(i.item_name, name));
+        if (!item) {
+          // The API answered, but said nothing at all about this name. That
+          // is not the same as "no product exists" — batches silently drop
+          // names, which is how whole meals ended up priced entirely from
+          // guesses. Retry these one at a time before giving up on them.
+          missing.push(name);
+          continue;
+        }
+        const top = pickBestProduct(item.products ?? [], name);
         result.set(
           name,
           top
@@ -65,30 +79,73 @@ export class PepestoPricingAdapter implements PricingAdapter {
       }
     }
 
+    for (const name of missing) {
+      const data = await this.fetchProducts([name]);
+      const item = (data.items ?? []).find((i) => matchesIngredient(i.item_name, name));
+      const top = item ? pickBestProduct(item.products ?? [], name) : null;
+      result.set(
+        name,
+        top
+          ? { skuName: top.product_name, pricePerPackGBP: top.price.price / 100, packQuantity: top.quantity }
+          : null
+      );
+    }
+
     return result;
   }
 
+  /**
+   * One /products call, retried on transient failure.
+   *
+   * The API intermittently answers 200 with a non-JSON body (an internal
+   * path fragment rather than a payload). Left unhandled that threw
+   * mid-pipeline and abandoned a run with lines already cleared, so a single
+   * blip could leave dozens of meals unpriced. Retried with backoff instead;
+   * a genuine, repeated failure still throws rather than being swallowed,
+   * because silently returning "no match" would turn an outage into a
+   * shopping list full of guesses.
+   */
   private async fetchProducts(names: string[]): Promise<PepestoProductsResponse> {
     const shoppingList = names.join("\n");
+    let lastError = "";
 
-    const res = await fetch(`${this.baseUrl}/products`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        manual_shopping_list: shoppingList,
-        supermarket_domain: this.supermarketDomain,
-      }),
-    });
+    for (let attempt = 0; attempt < FETCH_ATTEMPTS; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt));
 
-    if (!res.ok) {
+      let res: Response;
+      try {
+        res = await fetch(`${this.baseUrl}/products`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            manual_shopping_list: shoppingList,
+            supermarket_domain: this.supermarketDomain,
+          }),
+        });
+      } catch (err) {
+        lastError = `network error: ${err instanceof Error ? err.message : String(err)}`;
+        continue;
+      }
+
       const body = await res.text();
-      throw new Error(`Pepesto /products failed (${res.status}): ${body}`);
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}: ${body.slice(0, 200)}`;
+        // 4xx other than rate limiting won't fix itself.
+        if (res.status >= 400 && res.status < 500 && res.status !== 429) break;
+        continue;
+      }
+
+      try {
+        return JSON.parse(body) as PepestoProductsResponse;
+      } catch {
+        lastError = `200 but body was not JSON: ${body.slice(0, 120)}`;
+      }
     }
 
-    return res.json();
+    throw new Error(`Pepesto /products failed after ${FETCH_ATTEMPTS} attempts (${lastError})`);
   }
 
   /** Pure local math — no API call. Turns a shared match into this dish's costs. */
@@ -216,7 +273,8 @@ function round1(n: number): number {
 }
 
 interface PepestoProductsResponse {
-  items: {
+  /** Absent on some responses, so never dereference it directly. */
+  items?: {
     item_name: string;
     products: {
       product: {

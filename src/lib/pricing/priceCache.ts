@@ -2,6 +2,7 @@ import { and, inArray, isNotNull } from "drizzle-orm";
 import { db } from "../db/client";
 import { mealIngredients } from "../db/schema";
 import type { MatchedProduct } from "./adapter";
+import { isPlausibleProduct } from "./matching";
 
 export interface CacheLookup {
   /** Names already resolved to a real SKU — reusable at zero API cost. */
@@ -32,7 +33,11 @@ function piecesFromUnitSize(unitSize: string | null): number | null {
  * the API had no product for them last time, so they go straight back to an
  * estimate instead of burning a request to rediscover that.
  */
-export async function cachedMatchesFor(names: string[]): Promise<CacheLookup> {
+export async function cachedMatchesFor(
+  names: string[],
+  opts: { trustEstimates?: boolean } = {}
+): Promise<CacheLookup> {
+  const { trustEstimates = true } = opts;
   const matches = new Map<string, MatchedProduct>();
   const unmatchable = new Set<string>();
   if (names.length === 0) return { matches, unmatchable };
@@ -44,12 +49,23 @@ export async function cachedMatchesFor(names: string[]): Promise<CacheLookup> {
 
   for (const row of rows) {
     if (row.isEstimated) {
-      unmatchable.add(row.genericName);
+      // Only treat a past estimate as proof there's no product when we're
+      // allowed to. Estimates were previously permanent: a name guessed once
+      // was never asked about again, so 15 meals stayed 100% guessed while
+      // the very same ingredients were correctly priced on other dishes.
+      if (trustEstimates) unmatchable.add(row.genericName);
       continue;
     }
     // A usable match needs a pack price; without one there's nothing to
     // re-derive another meal's quantity from.
     if (row.skuName === null || row.packPrice === null) continue;
+
+    // Re-check the stored match against today's rules before handing it
+    // back. Without this the cache launders old mistakes into new meals and
+    // makes them permanent: "olive oil" had been matched to Olive Oil Spray
+    // long before spray was ruled out, and the cache then applied it to 20
+    // further dishes where it could never be re-examined.
+    if (!isPlausibleProduct(row.skuName, row.genericName)) continue;
     if (matches.has(row.genericName)) continue;
 
     const grams = row.packGrams !== null ? Number(row.packGrams) : null;
