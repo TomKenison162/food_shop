@@ -1,4 +1,5 @@
 import {
+  jsonb,
   pgTable,
   serial,
   text,
@@ -256,6 +257,40 @@ export const pantryItems = pgTable("pantry_items", {
   /** YYYY-MM-DD after which this stock is treated as gone. */
   expiresOn: varchar("expires_on", { length: 10 }),
 });
+
+/**
+ * Append-only record of everything known at the moment a decision was made,
+ * and everything known when it was answered.
+ *
+ * Deliberately NOT a feature store and deliberately NOT read by
+ * buildTrainingSet. The model uses a small, hand-chosen feature set because
+ * a wide one overfits on tens of rows. This table exists for the opposite
+ * reason: context that isn't captured is gone forever, and the cost of
+ * keeping it is a few kilobytes a day. When there are hundreds of labelled
+ * evenings and a real question to ask ("does humidity matter?", "am I
+ * slower to reply when I decline?"), the history will already be here.
+ *
+ * `payload` is jsonb precisely so new things can be logged without a
+ * migration. Nothing reads its shape, so nothing breaks when it changes.
+ */
+export const eventLog = pgTable(
+  "event_log",
+  {
+    id: serial("id").primaryKey(),
+    /** "plan" when a dinner was chosen, "feedback" when one was answered. */
+    kind: varchar("kind", { length: 20 }).notNull(),
+    /** Ties a feedback event back to the plan that produced it. */
+    offerGroup: varchar("offer_group", { length: 40 }),
+    servedDate: varchar("served_date", { length: 10 }),
+    mealId: integer("meal_id"),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    eventGroupIdx: index("event_log_group_idx").on(t.offerGroup),
+    eventKindIdx: index("event_log_kind_idx").on(t.kind),
+  })
+);
 
 /**
  * Latest trained XGBoost model (gradient-boosted trees, @wlearn/xgboost —

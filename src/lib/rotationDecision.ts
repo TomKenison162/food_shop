@@ -37,9 +37,32 @@ export interface RotationDecision {
   relaxedRepeatRule: boolean;
   relaxedBudgetRule: boolean;
   usedModel: boolean;
+  diagnostics: SelectionDiagnostics;
 }
 
 export const DEFAULT_ALTERNATIVES = 2;
+
+/**
+ * Why each meal did or didn't make it, and the sampling weights used.
+ *
+ * Reported purely so the event log can capture it. None of this changes the
+ * decision; it exists because the alternative is throwing away the only
+ * record of how a choice was actually made.
+ */
+export interface SelectionDiagnostics {
+  approvedCount: number;
+  excludedByRepeat: number[];
+  excludedByProtein: number[];
+  excludedByBudget: number[];
+  finalPoolIds: number[];
+  temperature: number;
+  /** mealId -> softmax weight, and the resulting selection probability. */
+  weights: { mealId: number; weight: number; probability: number }[];
+  chosenProbability: number | null;
+  chosenScoreRank: number | null;
+  /** Shannon entropy of the selection distribution, in nats. */
+  entropy: number | null;
+}
 
 /**
  * Pure meal-selection logic — no database, no clock, no network — so the
@@ -103,14 +126,45 @@ export function decideTonightsDinner(input: RotationInput): RotationDecision | n
 
   const wanted = 1 + (input.alternativesWanted ?? DEFAULT_ALTERNATIVES);
   const { meals: picked, usedModel } = sampleDistinct(pool, input.scores, random, wanted);
+  const chosen = picked[0];
+
+  const inPool = new Set(pool.map((m) => m.id));
+  const rawWeights = pool.map((m) =>
+    input.scores ? Math.exp((input.scores.get(m.id) ?? 0) / SOFTMAX_TEMPERATURE) : 1
+  );
+  const totalWeight = rawWeights.reduce((a, b) => a + b, 0);
+  const weights = pool.map((m, i) => ({
+    mealId: m.id,
+    weight: rawWeights[i],
+    probability: totalWeight > 0 ? rawWeights[i] / totalWeight : 0,
+  }));
+  const entropy = totalWeight > 0
+    ? -weights.reduce((acc, w) => (w.probability > 0 ? acc + w.probability * Math.log(w.probability) : acc), 0)
+    : null;
+
+  const ranked = input.scores
+    ? [...pool].sort((a, b) => (input.scores!.get(b.id) ?? 0) - (input.scores!.get(a.id) ?? 0))
+    : null;
 
   return {
-    meal: picked[0],
+    meal: chosen,
     alternatives: picked.slice(1),
     relaxedProteinRule,
     relaxedRepeatRule,
     relaxedBudgetRule,
     usedModel,
+    diagnostics: {
+      approvedCount: approvedMeals.length,
+      excludedByRepeat: approvedMeals.filter((m) => !notOverExposed.includes(m)).map((m) => m.id),
+      excludedByProtein: base.filter((m) => !pool.includes(m) && yesterdaysProtein !== null && m.primaryProtein === yesterdaysProtein).map((m) => m.id),
+      excludedByBudget: base.filter((m) => !inPool.has(m.id) && !(yesterdaysProtein !== null && m.primaryProtein === yesterdaysProtein)).map((m) => m.id),
+      finalPoolIds: pool.map((m) => m.id),
+      temperature: SOFTMAX_TEMPERATURE,
+      weights,
+      chosenProbability: weights.find((w) => w.mealId === chosen.id)?.probability ?? null,
+      chosenScoreRank: ranked ? ranked.findIndex((m) => m.id === chosen.id) + 1 : null,
+      entropy: entropy !== null ? Number(entropy.toFixed(6)) : null,
+    },
   };
 }
 

@@ -5,8 +5,10 @@ import { meals, mealHistory } from "@/lib/db/schema";
 import { verifyFeedbackLink, type FeedbackAction } from "@/lib/feedbackLink";
 import { DECLINE_LABELS, isDeclineReason, type DeclineReason } from "@/lib/declineReasons";
 import { recordMealCooked } from "@/lib/pantry/pantry";
+import { logFeedbackEvent } from "@/lib/eventLog";
 import { sendDinnerReminder } from "@/lib/email/sendReminder";
 import {
+  offerContext,
   getPlannedMeal,
   offerGroupFor,
   replacePlanForDate,
@@ -104,6 +106,23 @@ export async function GET(req: NextRequest) {
 
   const offerGroup = await offerGroupFor(date, mealId);
   const live = await getPlannedMeal(date);
+
+  // Wide capture, never trained on. Reply latency in particular cannot be
+  // reconstructed afterwards, and a reply two minutes after the email
+  // plausibly means something different from one at 11pm.
+  const offered = offerGroup ? await offerContext(offerGroup, mealId) : null;
+  await logFeedbackEvent({
+    offerGroup,
+    servedDate: date,
+    mealId,
+    action,
+    reason,
+    emailedAt: live?.emailedAt ?? null,
+    userAgent: req.headers.get("user-agent"),
+    offeredPosition: offered?.position ?? null,
+    offeredCount: offered?.count ?? null,
+    chosenScore: null,
+  });
 
   // --- an alternative was preferred ---------------------------------------
   if (action === "choose") {

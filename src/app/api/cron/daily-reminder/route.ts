@@ -10,6 +10,7 @@ import { isPaused } from "@/lib/settings";
 import { purgeStalePantryItems } from "@/lib/pantry/pantry";
 import { trainModel } from "@/lib/ml/model";
 import { priceApprovedMeals } from "@/lib/pricing/priceApproved";
+import { eventLogSummary } from "@/lib/eventLog";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
       .set({ emailedAt: new Date() })
       .where(eq(mealHistory.id, (await getPlannedMeal(today))!.id));
 
-    return NextResponse.json({ meal: result.meal.name, ...emailResult, training, priced: pricing.pricedMealIds.length });
+    return NextResponse.json({ meal: result.meal.name, ...emailResult, training, priced: pricing.pricedMealIds.length, log: await eventLogSummary() });
   } catch (err) {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     await sendFailureAlert(message);

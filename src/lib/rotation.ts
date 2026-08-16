@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { approvedQueue, meals, mealHistory, mealIngredients, mealOffers } from "./db/schema";
+import { approvedQueue, meals, mealHistory, mealIngredients, mealOffers, mlModel } from "./db/schema";
 import { addDaysToDateString, dayOfWeekForDateString, londonDateString } from "./date";
 import { pantryOverlapGrams } from "./pantry/pantry";
 import { getCurrentWeather } from "./weather/weather";
@@ -10,6 +10,7 @@ import { spentInWeek } from "./budgetSpend";
 import { costForPortions, firstShopCostForPortions, WEEKLY_BUDGET_GBP } from "./budget";
 import { decideTonightsDinner, REPEAT_WINDOW_DAYS, type MealRecord } from "./rotationDecision";
 import type { FeatureContext } from "./ml/features";
+import { logPlanEvent } from "./eventLog";
 
 export type { MealRecord };
 
@@ -91,14 +92,18 @@ export async function planMealForDate(
   }
 
   const dow = dayOfWeekForDateString(date);
+  // Weather is only meaningful for today; a plan built days ahead can't know
+  // it, and guessing would poison the training snapshot.
+  const weather =
+    date === londonDateString(now)
+      ? await getCurrentWeather()
+      : { temperatureC: null, apparentTemperatureC: null, precipitationMm: null, raw: null };
   const context: FeatureContext = {
     dayOfWeek: dow,
     isWeekend: dow === 0 || dow === 6,
-    // Weather is only meaningful for today; a plan built days ahead can't
-    // know it, and guessing would poison the training snapshot.
-    ...(date === londonDateString(now)
-      ? await getCurrentWeather()
-      : { temperatureC: null, apparentTemperatureC: null, precipitationMm: null }),
+    temperatureC: weather.temperatureC,
+    apparentTemperatureC: weather.apparentTemperatureC,
+    precipitationMm: weather.precipitationMm,
   };
 
   const approvedMeals = (await approvedMealRecords()).filter((m) => !excludeMealIds.includes(m.id));
@@ -174,6 +179,31 @@ export async function planMealForDate(
   const offerGroup = `${date}:${Date.now().toString(36)}`;
   await recordOffer(offerGroup, date, context, chosen, decision.alternatives, decision.usedModel);
 
+  // Wide capture, separate from the model's inputs and never trained on.
+  // Records the entire scored candidate pool, the pantry, recent history and
+  // the full weather payload, none of which can be reconstructed later.
+  await logPlanEvent({
+    offerGroup,
+    servedDate: date,
+    portions,
+    weather,
+    candidates: approvedMeals,
+    scores,
+    chosen,
+    alternatives: decision.alternatives,
+    usedModel: decision.usedModel,
+    relaxedProteinRule: decision.relaxedProteinRule,
+    relaxedRepeatRule: decision.relaxedRepeatRule,
+    relaxedBudgetRule: decision.relaxedBudgetRule,
+    spentThisWeekGBP: spentThisWeek + (cost ?? 0),
+    firstShopSpentThisWeekGBP: firstShopSpentThisWeek + (firstShop ?? 0),
+    weeklyBudgetGBP: WEEKLY_BUDGET_GBP,
+    yesterdaysProtein: yesterday?.primaryProtein ?? null,
+    diagnostics: decision.diagnostics,
+    modelInfo: await currentModelInfo(),
+    now,
+  });
+
   return {
     meal: chosen,
     alternatives: decision.alternatives,
@@ -218,7 +248,7 @@ export async function setPlanForDate(date: string, mealId: number): Promise<Rota
     isWeekend: dow === 0 || dow === 6,
     ...(date === londonDateString()
       ? await getCurrentWeather()
-      : { temperatureC: null, apparentTemperatureC: null, precipitationMm: null }),
+      : { temperatureC: null, apparentTemperatureC: null, precipitationMm: null, raw: null }),
   };
 
   const cost = costForPortions(meal, portions);
@@ -366,6 +396,38 @@ async function latestOfferForDate(
 
   const alternatives = await db.select().from(meals).where(inArray(meals.id, altIds));
   return { offerGroup, alternatives };
+}
+
+/** Where a meal sat in the slate it was offered in, and how big that slate was. */
+export async function offerContext(
+  offerGroup: string,
+  mealId: number
+): Promise<{ position: number; count: number } | null> {
+  const rows = await db
+    .select({ mealId: mealOffers.mealId, wasPrimary: mealOffers.wasPrimary })
+    .from(mealOffers)
+    .where(eq(mealOffers.offerGroup, offerGroup));
+  if (rows.length === 0) return null;
+  const ordered = [...rows].sort((a, b) => Number(b.wasPrimary) - Number(a.wasPrimary));
+  const position = ordered.findIndex((r) => r.mealId === mealId);
+  return { position, count: rows.length };
+}
+
+/** Which model produced tonight's scores, for the log. Null when untrained. */
+async function currentModelInfo(): Promise<unknown> {
+  try {
+    const row = await db.query.mlModel.findFirst({ orderBy: desc(mlModel.trainedAt) });
+    if (!row) return null;
+    return {
+      trainedAt: row.trainedAt,
+      sampleCount: row.sampleCount,
+      accuracy: row.accuracy,
+      baselineAccuracy: row.baselineAccuracy,
+      featureNames: row.featureNames,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** The offer group a given meal was part of on a date, if any. */

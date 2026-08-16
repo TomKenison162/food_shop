@@ -10,12 +10,19 @@ export interface CurrentWeather {
   apparentTemperatureC: number | null;
   /** Precipitation in the last hour, mm. */
   precipitationMm: number | null;
+  /**
+   * Everything else the same call returns, unparsed and unused by the model.
+   * Logged verbatim so a future idea (humidity? pressure? sunset time?) can
+   * be tested against real history instead of starting from zero.
+   */
+  raw: unknown;
 }
 
 const EMPTY: CurrentWeather = {
   temperatureC: null,
   apparentTemperatureC: null,
   precipitationMm: null,
+  raw: null,
 };
 
 /**
@@ -36,7 +43,11 @@ export async function getCurrentWeather(): Promise<CurrentWeather> {
   try {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-      `&current=temperature_2m,apparent_temperature,precipitation&timezone=Europe%2FLondon`;
+      `&current=temperature_2m,apparent_temperature,precipitation,relative_humidity_2m,` +
+      `wind_speed_10m,wind_gusts_10m,cloud_cover,weather_code,is_day,pressure_msl,surface_pressure` +
+      `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,` +
+      `sunrise,sunset,daylight_duration,uv_index_max` +
+      `&forecast_days=1&timezone=Europe%2FLondon`;
     const res = await fetch(url);
     if (!res.ok) return EMPTY;
     const data = await res.json();
@@ -45,6 +56,7 @@ export async function getCurrentWeather(): Promise<CurrentWeather> {
       temperatureC: num(data?.current?.temperature_2m),
       apparentTemperatureC: num(data?.current?.apparent_temperature),
       precipitationMm: num(data?.current?.precipitation),
+      raw: data ?? null,
     };
   } catch {
     return EMPTY;
