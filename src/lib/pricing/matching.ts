@@ -182,6 +182,119 @@ export function scoreProductMatch(skuName: string, ingredientName: string): numb
   return score;
 }
 
+
+/**
+ * Meat is where token overlap fails hardest, because the animal name is
+ * usually the only shared word and it says nothing about what you're
+ * buying. Real matches this produced: "pork shoulder" to Richmond Thick
+ * Pork Sausages, "beef sirloin" to 5% Fat Beef Mince, "duck legs" to Duck
+ * Livers, "whole chicken" to a carton of ramen broth, and "diced venison
+ * shoulder" to a lamb joint.
+ *
+ * Two independent checks, both of which must pass:
+ *  1. same animal
+ *  2. compatible cut, when both sides name one
+ */
+const ANIMALS: { name: string; re: RegExp }[] = [
+  { name: "beef", re: /\bbeef\b|\bveal\b|\bsteak\b|\bbrisket\b/ },
+  { name: "pork", re: /\bpork\b|\bgammon\b|\bham\b|\bbacon\b|\bchorizo\b|\bpancetta\b/ },
+  { name: "lamb", re: /\blamb\b|\bmutton\b|\bmerguez\b/ },
+  { name: "chicken", re: /\bchicken\b|\bpoultry\b/ },
+  { name: "duck", re: /\bduck\b/ },
+  { name: "turkey", re: /\bturkey\b/ },
+  { name: "venison", re: /\bvenison\b/ },
+  // Listed separately rather than as one "seafood" bucket, or cod would
+  // happily match salmon on a shared category.
+  { name: "prawn", re: /\bprawns?\b|\bshrimps?\b/ },
+  { name: "scallop", re: /\bscallops?\b/ },
+  { name: "mussel", re: /\bmussels?\b/ },
+  { name: "salmon", re: /\bsalmon\b/ },
+  { name: "cod", re: /\bcod\b/ },
+  { name: "fish", re: /\bfish\b|\bhaddock\b|\btuna\b/ },
+];
+
+/**
+ * Cut families. Anything that resolves to two different families is a
+ * different product, however similar the words look.
+ */
+const CUTS: { name: string; re: RegExp }[] = [
+  { name: "stock", re: /\bstock\b|\bbroth\b|\bbouillon\b|stock pot|stock cube/ },
+  { name: "offal", re: /\blivers?\b|\bkidneys?\b|\bhearts?\b|\boffal\b|\bpate\b/ },
+  { name: "sausage", re: /\bsausages?\b|chipolata|frankfurter|\bmerguez\b/ },
+  { name: "mince", re: /\bminced?\b|\bburgers?\b|\bmeatballs?\b/ },
+  { name: "diced", re: /\bdiced\b|\bstewing\b|\bcasserole\b|\bchunks\b|\bcubed\b/ },
+  { name: "strips", re: /stir fry|\bstrips\b/ },
+  { name: "steak", re: /\bsteaks?\b|\bsirloin\b|\brump\b|\bmedallions?\b|\bskirt\b|\bribeye\b|\bfillet steak\b/ },
+  { name: "chop", re: /\bchops?\b|\bcutlets?\b/ },
+  { name: "ribs", re: /\bribs?\b/ },
+  { name: "belly", re: /\bbelly\b/ },
+  { name: "wing", re: /\bwings?\b/ },
+  { name: "thigh", re: /\bthighs?\b|\bdrumsticks?\b/ },
+  { name: "breast", re: /\bbreasts?\b/ },
+  { name: "shank", re: /\bshanks?\b/ },
+  { name: "tenderloin", re: /\btenderloins?\b/ },
+  { name: "joint", re: /\bjoints?\b|\bshoulders?\b|\bshin\b|\brolled\b|\blegs?\b/ },
+  { name: "whole", re: /\bwhole\b.*\b(chicken|duck|bird)\b|\b(chicken|duck)\b.*\bwhole\b/ },
+  { name: "fillet", re: /\bfillets?\b/ },
+];
+
+/**
+ * Raw meat wants raw meat. A recipe asking for chicken breasts does not
+ * want Cajun Chicken Breast Grills, and king prawns are not battered
+ * prawns, but both share every meaningful token.
+ */
+const PREPARED =
+  /battered|breaded|crispy|goujons?|nuggets?|kievs?|marinated|seasoned|\bgrills?\b|cajun|bbq |barbecue|tikka|peri|southern fried|dippers?|\bcoated\b|\bin sauce\b|\bpickled\b|\bsmoked\b|\bcured\b|\bin brine\b/;
+
+/** The cut a name declares, or null if it names none. */
+export function cutOf(text: string): string | null {
+  return classify(text.toLowerCase(), CUTS);
+}
+
+function classify(text: string, table: { name: string; re: RegExp }[]): string | null {
+  for (const entry of table) {
+    if (entry.re.test(text)) return entry.name;
+  }
+  return null;
+}
+
+/**
+ * True when a SKU is an acceptable cut of the right animal for a meat
+ * ingredient. Non-meat ingredients pass straight through.
+ */
+export function meatMatches(skuName: string, ingredientName: string): boolean {
+  const sku = skuName.toLowerCase();
+  const ing = ingredientName.toLowerCase();
+
+  const ingAnimal = classify(ing, ANIMALS);
+  if (ingAnimal === null) return true; // not a meat line; nothing to check
+
+  // The SKU must name the same animal. "diced venison shoulder" matched a
+  // lamb joint on the shared word "shoulder" alone.
+  const animal = ANIMALS.find((a) => a.name === ingAnimal)!;
+  if (!animal.re.test(sku)) return false;
+
+  const skuAnimal = classify(sku, ANIMALS);
+  if (skuAnimal !== null && skuAnimal !== ingAnimal && !animal.re.test(sku)) return false;
+
+  if (PREPARED.test(sku) && !PREPARED.test(ing)) return false;
+
+  const ingCut = classify(ing, CUTS);
+  const skuCut = classify(sku, CUTS);
+
+  // A bare "chicken" ingredient should still accept thighs or breasts.
+  if (ingCut === null) return true;
+
+  // But when the recipe does name a cut, a product that names none is not a
+  // substitute for it. "Quick Cook Extra Thin Beef" declares nothing, so it
+  // satisfied beef sirloin, beef fillet and beef short ribs alike, and being
+  // the cheapest it won all three. An honest flagged estimate beats a cut
+  // that is silently wrong and priced like something else.
+  if (skuCut === null) return false;
+
+  return ingCut === skuCut;
+}
+
 export function matchesIngredient(itemName: string, ingredientName: string): boolean {
   const a = itemName.toLowerCase().trim();
   const b = ingredientName.toLowerCase().trim();
@@ -189,6 +302,8 @@ export function matchesIngredient(itemName: string, ingredientName: string): boo
   for (const c of CONFLICTS) {
     if (c.ingredient.test(b) && c.sku.test(a)) return false;
   }
+
+  if (!meatMatches(a, b)) return false;
 
   if (a === b) return true;
 

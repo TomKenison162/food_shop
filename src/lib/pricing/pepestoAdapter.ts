@@ -1,6 +1,6 @@
 import { EMPTY_COST, MatchedProduct, PricingAdapter, QuantityCost } from "./adapter";
 import { parseQuantityToGrams } from "./quantity";
-import { isPlausibleProduct, matchesIngredient, scoreProductMatch } from "./matching";
+import { cutOf, isPlausibleProduct, matchesIngredient, scoreProductMatch } from "./matching";
 
 /**
  * Real pricing via Pepesto (https://www.pepesto.com), a licensed grocery
@@ -184,8 +184,20 @@ export function pickBestProduct<T extends ProductCandidate>(
   candidates: T[],
   ingredientName: string
 ): T["product"] | null {
-  const plausible = candidates.filter((c) => isPlausibleProduct(c.product.product_name, ingredientName));
+  let plausible = candidates.filter((c) => isPlausibleProduct(c.product.product_name, ingredientName));
   if (plausible.length === 0) return null;
+
+  // When the recipe names a cut and some product names the same cut, only
+  // those count. A generic "Quick Cook Extra Thin Beef" declares no cut, so
+  // it passed every check and then won on price, taking the place of a
+  // sirloin steak in three dishes. This runs before the price ceiling
+  // deliberately: the right cut is worth paying for, a cheaper wrong one
+  // is not.
+  const wantedCut = cutOf(ingredientName);
+  if (wantedCut !== null) {
+    const sameCut = plausible.filter((c) => cutOf(c.product.product_name) === wantedCut);
+    if (sameCut.length > 0) plausible = sameCut;
+  }
 
   const cheapest = Math.min(...plausible.map((c) => c.product.price.price));
   const ceiling = cheapest * MAX_PRICE_MULTIPLE_OVER_CHEAPEST;

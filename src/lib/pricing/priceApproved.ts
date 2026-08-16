@@ -32,7 +32,12 @@ async function resolveMatches(
     if (ing.skuPrice === null) needed.add(ing.genericName);
   }
 
-  const { matches: cached, unmatchable } = await cachedMatchesFor([...needed]);
+  // trustEstimates:false on purpose. Treating a past estimate as proof that
+  // no product exists made estimates self-perpetuating: "pork shoulder" was
+  // guessed once, so it was never asked about again, even though the API
+  // offers a Pork Shoulder Joint at £6.30. Pricing runs are rare enough that
+  // re-asking is worth the handful of requests.
+  const { matches: cached, unmatchable } = await cachedMatchesFor([...needed], { trustEstimates: false });
 
   // Only names with no prior verdict at all are worth paying for.
   const toQuery = [...needed].filter((n) => !cached.has(n) && !unmatchable.has(n));
