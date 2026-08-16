@@ -9,6 +9,7 @@ import { londonDateString, londonHour } from "@/lib/date";
 import { isPaused } from "@/lib/settings";
 import { purgeStalePantryItems } from "@/lib/pantry/pantry";
 import { trainModel } from "@/lib/ml/model";
+import { priceApprovedMeals } from "@/lib/pricing/priceApproved";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -57,6 +58,13 @@ export async function GET(req: NextRequest) {
     // Expired leftovers would otherwise show up as "you already have this".
     await purgeStalePantryItems(today);
 
+    // Catch anything approved before on-demand pricing existed, or whose
+    // pricing failed at approval time. A no-op (and free) when the whole
+    // queue is already priced, which is the normal case — it exists so the
+    // budget and tier rules never have to reason about a NULL cost, and so
+    // the email never goes out with a missing shopping-list total.
+    const pricing = await priceApprovedMeals();
+
     // Retrain before choosing, so tonight's pick uses every reply so far.
     // This lives here rather than in the feedback route because
     // leave-one-out CV fits one model per labelled example and easily
@@ -93,7 +101,7 @@ export async function GET(req: NextRequest) {
       .set({ emailedAt: new Date() })
       .where(eq(mealHistory.id, (await getPlannedMeal(today))!.id));
 
-    return NextResponse.json({ meal: result.meal.name, ...emailResult, training });
+    return NextResponse.json({ meal: result.meal.name, ...emailResult, training, priced: pricing.pricedMealIds.length });
   } catch (err) {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     await sendFailureAlert(message);
