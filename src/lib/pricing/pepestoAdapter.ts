@@ -1,6 +1,6 @@
 import { EMPTY_COST, MatchedProduct, PricingAdapter, QuantityCost } from "./adapter";
 import { parseQuantityToGrams } from "./quantity";
-import { isPlausibleProduct, matchesIngredient } from "./matching";
+import { isPlausibleProduct, matchesIngredient, scoreProductMatch } from "./matching";
 
 /**
  * Real pricing via Pepesto (https://www.pepesto.com), a licensed grocery
@@ -55,10 +55,7 @@ export class PepestoPricingAdapter implements PricingAdapter {
       const data = await this.fetchProducts(chunk);
       for (const name of chunk) {
         const match = data.items.find((item) => matchesIngredient(item.item_name, name));
-        // Take the first candidate that actually looks like the ingredient,
-        // not just the first one returned — see matching.ts for why.
-        const top = match?.products?.find((p) => isPlausibleProduct(p.product.product_name, name))
-          ?.product;
+        const top = pickBestProduct(match?.products ?? [], name);
         result.set(
           name,
           top
@@ -102,6 +99,54 @@ export class PepestoPricingAdapter implements PricingAdapter {
   ): QuantityCost {
     return computeQuantityCost(match, requestedQuantity, ingredientName);
   }
+}
+
+/**
+ * How much dearer than the cheapest plausible option a better-named match is
+ * allowed to be. Name quality should win ties, but not at any price: without
+ * a ceiling, "beef sirloin" happily took a £8.00 organic pack over a £5.00
+ * standard one for a wording difference.
+ */
+const MAX_PRICE_MULTIPLE_OVER_CHEAPEST = 1.6;
+
+interface ProductCandidate {
+  product: { product_name: string; price: { price: number }; quantity: { grams?: number; pieces?: number } };
+}
+
+/**
+ * Chooses among the plausible products for an ingredient.
+ *
+ * Previously this took the first plausible candidate the API returned, which
+ * is the single biggest source of over-pricing in this pipeline: ordering is
+ * the API's business, not a judgement about value, so premium and prepared
+ * lines won constantly. Now every candidate is checked for plausibility,
+ * ranked by how well it answers the ingredient, and then held to a price
+ * ceiling relative to the cheapest plausible option.
+ */
+export function pickBestProduct<T extends ProductCandidate>(
+  candidates: T[],
+  ingredientName: string
+): T["product"] | null {
+  const plausible = candidates.filter((c) => isPlausibleProduct(c.product.product_name, ingredientName));
+  if (plausible.length === 0) return null;
+
+  const cheapest = Math.min(...plausible.map((c) => c.product.price.price));
+  const ceiling = cheapest * MAX_PRICE_MULTIPLE_OVER_CHEAPEST;
+
+  const affordable = plausible.filter((c) => c.product.price.price <= ceiling);
+  const pool = affordable.length > 0 ? affordable : plausible;
+
+  let best = pool[0];
+  let bestScore = scoreProductMatch(best.product.product_name, ingredientName);
+  for (const c of pool.slice(1)) {
+    const score = scoreProductMatch(c.product.product_name, ingredientName);
+    // Ties go to the cheaper product rather than to whatever came first.
+    if (score > bestScore || (score === bestScore && c.product.price.price < best.product.price.price)) {
+      best = c;
+      bestScore = score;
+    }
+  }
+  return best.product;
 }
 
 /**

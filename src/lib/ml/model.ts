@@ -1,6 +1,8 @@
 import { and, desc, eq, gt, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { db } from "../db/client";
-import { meals, mealIngredients, mlModel, mealHistory, pantryItems } from "../db/schema";
+import { meals, mealIngredients, mlModel, mealHistory, mealOffers, pantryItems } from "../db/schema";
+import { isDeclineReason, isPreferenceSignal } from "../declineReasons";
+import { dishFeatures } from "./dishFeatures";
 import { buildFeatureVector, FEATURE_NAMES, type FeatureContext, type MealFeatureExtras } from "./features";
 import { trainXGBoost, scoreWithXGBoost } from "./xgboostModel";
 import { leaveOneOutEvaluate } from "./evaluate";
@@ -24,54 +26,138 @@ export interface TrainResult {
   baselineAccuracy?: number;
 }
 
+export interface TrainingSet {
+  X: number[][];
+  y: number[];
+  fromOffers: number;
+  fromReplies: number;
+  excludedNotHome: number;
+}
+
 /**
- * Retrains the ranking model from every answered daily reminder so far.
+ * Assembles training examples from the two signals the email produces.
  *
- * Training examples come straight from meal_history, where every feature
- * was snapshotted at serve time — so the model learns from the world as it
- * was when each suggestion was made, not as it looks at retrain time. (An
- * earlier version recomputed pantry/recency features from *current* state,
- * which silently mislabelled every historical example.)
+ * 1. Offer groups (meal_offers). The email shows a primary plus alternatives;
+ *    clicking one labels every meal in that group at once — one positive and
+ *    the rest negatives, all sharing a context exactly. This is the dense,
+ *    comparative signal: it isolates what distinguishes *meals* rather than
+ *    what distinguishes Tuesdays, and one reply yields several examples.
+ *    Unresolved groups are skipped, because nobody replying is not a dislike.
  *
- * Requires a minimum of both accepted and declined examples: with less, an
- * overfit model would be worse than the random fallback, so we skip and say
- * why rather than produce something confidently wrong.
+ * 2. Accept/decline replies (meal_history), minus "not home" — that says
+ *    nothing about food, and training on it is how a week away used to teach
+ *    the model to hate whatever it happened to suggest.
+ *
+ * Both sources use feature values snapshotted when the suggestion was made,
+ * never recomputed: pantry state, recency and weather all drift, and weather
+ * can't be re-fetched for a past date.
  */
-export async function trainModel(): Promise<TrainResult> {
-  const rows = await db
+export async function buildTrainingSet(): Promise<TrainingSet> {
+  const X: number[][] = [];
+  const y: number[] = [];
+
+  // Recipe character (effort, richness, carb base) is derived rather than
+  // stored: unlike weather or pantry state it doesn't drift, so there's
+  // nothing to snapshot. Fetched once for every meal here instead of per
+  // training row.
+  const allIngredients = await db
+    .select({ mealId: mealIngredients.mealId, genericName: mealIngredients.genericName })
+    .from(mealIngredients);
+  const ingredientsByMeal = new Map<number, string[]>();
+  for (const row of allIngredients) {
+    const list = ingredientsByMeal.get(row.mealId) ?? [];
+    list.push(row.genericName);
+    ingredientsByMeal.set(row.mealId, list);
+  }
+
+  const toVector = (
+    snap: {
+      dayOfWeek: number | null;
+      isWeekend: boolean | null;
+      temperatureC: string | null;
+      apparentTemperatureC: string | null;
+      precipitationMm: string | null;
+      pantryOverlapGrams: string | null;
+      daysSinceLastServed: number | null;
+      proteinDaysSinceLastServed: number | null;
+      ingredientsCount: number | null;
+    },
+    meal: MealRecord
+  ): number[] => {
+    const ctx: FeatureContext = {
+      dayOfWeek: snap.dayOfWeek ?? 0,
+      isWeekend: snap.isWeekend ?? false,
+      temperatureC: snap.temperatureC !== null ? Number(snap.temperatureC) : null,
+      apparentTemperatureC: snap.apparentTemperatureC !== null ? Number(snap.apparentTemperatureC) : null,
+      precipitationMm: snap.precipitationMm !== null ? Number(snap.precipitationMm) : null,
+    };
+    const extras: MealFeatureExtras = {
+      pantryOverlapGrams: snap.pantryOverlapGrams !== null ? Number(snap.pantryOverlapGrams) : 0,
+      daysSinceLastServed: snap.daysSinceLastServed,
+      proteinDaysSinceLastServed: snap.proteinDaysSinceLastServed,
+      ingredientsCount: snap.ingredientsCount ?? 0,
+      dish: dishFeatures(meal.instructions, ingredientsByMeal.get(meal.id) ?? []),
+    };
+    return buildFeatureVector(ctx, meal, extras);
+  };
+
+  const offerRows = await db
+    .select({ offer: mealOffers, meal: meals })
+    .from(mealOffers)
+    .innerJoin(meals, eq(mealOffers.mealId, meals.id))
+    .where(isNotNull(mealOffers.resolvedAt));
+
+  for (const { offer, meal } of offerRows) {
+    X.push(toVector(offer, meal));
+    y.push(offer.wasChosen ? 1 : 0);
+  }
+
+  const replyRows = await db
     .select({ history: mealHistory, meal: meals })
     .from(mealHistory)
     .innerJoin(meals, eq(mealHistory.mealId, meals.id))
     .where(isNotNull(mealHistory.accepted));
 
-  const positives = rows.filter((r) => r.history.accepted === true).length;
-  const negatives = rows.length - positives;
+  let excludedNotHome = 0;
+  let fromReplies = 0;
+  for (const { history, meal } of replyRows) {
+    const reason = history.declineReason;
+    if (reason !== null && isDeclineReason(reason) && !isPreferenceSignal(reason)) {
+      excludedNotHome++;
+      continue;
+    }
+    X.push(toVector(history, meal));
+    y.push(history.accepted ? 1 : 0);
+    fromReplies++;
+  }
+
+  return { X, y, fromOffers: offerRows.length, fromReplies, excludedNotHome };
+}
+
+/**
+ * Retrains the ranking model from every resolved offer and answered reply.
+ *
+ * Requires a minimum of both classes: with less, an overfit model would be
+ * worse than the random fallback, so we skip and say why rather than produce
+ * something confidently wrong. The offer signal fills this far faster than
+ * the old one — a single evening's reply now labels three meals instead of
+ * one, so the gate clears in days rather than weeks.
+ */
+export async function trainModel(): Promise<TrainResult> {
+  const { X, y, fromOffers, fromReplies, excludedNotHome } = await buildTrainingSet();
+
+  const positives = y.filter((v) => v === 1).length;
+  const negatives = y.length - positives;
 
   if (positives < MIN_SAMPLES_PER_CLASS || negatives < MIN_SAMPLES_PER_CLASS) {
     return {
       trained: false,
-      reason: `Need at least ${MIN_SAMPLES_PER_CLASS} accepted and ${MIN_SAMPLES_PER_CLASS} declined replies (have ${positives} accepted, ${negatives} declined).`,
-      sampleCount: rows.length,
+      reason:
+        `Need at least ${MIN_SAMPLES_PER_CLASS} of each class (have ${positives} positive, ${negatives} negative` +
+        ` from ${fromOffers} offer rows and ${fromReplies} replies` +
+        `${excludedNotHome > 0 ? `; ${excludedNotHome} "not home" excluded` : ""}).`,
+      sampleCount: y.length,
     };
-  }
-
-  const X: number[][] = [];
-  const y: number[] = [];
-
-  for (const { history, meal } of rows) {
-    const ctx: FeatureContext = {
-      dayOfWeek: history.dayOfWeek ?? 0,
-      isWeekend: history.isWeekend ?? false,
-      temperatureC: history.temperatureC !== null ? Number(history.temperatureC) : null,
-    };
-    const extras: MealFeatureExtras = {
-      pantryOverlapGrams: history.pantryOverlapGrams !== null ? Number(history.pantryOverlapGrams) : 0,
-      daysSinceLastServed: history.daysSinceLastServed,
-      proteinDaysSinceLastServed: history.proteinDaysSinceLastServed,
-      ingredientsCount: history.ingredientsCount ?? 0,
-    };
-    X.push(buildFeatureVector(ctx, meal, extras));
-    y.push(history.accepted ? 1 : 0);
   }
 
   // Only ship a model that demonstrably beats guessing the majority class.
@@ -86,7 +172,7 @@ export async function trainModel(): Promise<TrainResult> {
         `Model scored ${(evaluation.accuracy * 100).toFixed(0)}% vs a ` +
         `${(evaluation.baselineAccuracy * 100).toFixed(0)}% majority-class baseline — ` +
         `not better than guessing, so it's not being used yet.`,
-      sampleCount: rows.length,
+      sampleCount: y.length,
       accuracy: evaluation.accuracy,
       baselineAccuracy: evaluation.baselineAccuracy,
     };
@@ -98,14 +184,14 @@ export async function trainModel(): Promise<TrainResult> {
   await db.insert(mlModel).values({
     featureNames: FEATURE_NAMES,
     modelDataBase64: Buffer.from(modelBuffer).toString("base64"),
-    sampleCount: rows.length,
+    sampleCount: y.length,
     accuracy: String(evaluation.accuracy),
     baselineAccuracy: String(evaluation.baselineAccuracy),
   });
 
   return {
     trained: true,
-    sampleCount: rows.length,
+    sampleCount: y.length,
     accuracy: evaluation.accuracy,
     baselineAccuracy: evaluation.baselineAccuracy,
   };
@@ -183,6 +269,7 @@ export async function scoreMealsForTonight(
       daysSinceLastServed: gapDays(lastServedByMeal.get(meal.id)),
       proteinDaysSinceLastServed: gapDays(lastServedByProtein.get(meal.primaryProtein)),
       ingredientsCount: names.length,
+      dish: dishFeatures(meal.instructions, names),
     });
   });
 

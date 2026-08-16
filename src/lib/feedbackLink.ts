@@ -1,9 +1,20 @@
 import { createHmac, timingSafeEqual } from "crypto";
+import type { DeclineReason } from "./declineReasons";
+
+/**
+ * What a click from the daily email means.
+ *  - accept:  cook the meal that was led with
+ *  - choose:  cook one of the alternatives instead (a comparative preference)
+ *  - decline: none of them, with a reason
+ */
+export type FeedbackAction = "accept" | "choose" | "decline";
 
 export interface FeedbackLinkParams {
   mealId: number;
   date: string; // YYYY-MM-DD
-  accepted: boolean;
+  action: FeedbackAction;
+  /** Only meaningful for `decline`. */
+  reason?: DeclineReason | null;
 }
 
 function secret(): string {
@@ -12,8 +23,13 @@ function secret(): string {
   return s;
 }
 
+/**
+ * The reason is inside the signed payload, not a free parameter alongside it
+ * — otherwise anyone holding a valid decline link could swap the reason and
+ * quietly rewrite a training label.
+ */
 function canonicalString(p: FeedbackLinkParams): string {
-  return [p.mealId, p.date, p.accepted].join("|");
+  return [p.mealId, p.date, p.action, p.reason ?? ""].join("|");
 }
 
 function sign(p: FeedbackLinkParams): string {
@@ -21,18 +37,19 @@ function sign(p: FeedbackLinkParams): string {
 }
 
 /**
- * Builds a signed GET link for the daily email's Yes/No buttons. Only the
- * identifiers travel in the URL — the ML feature context lives on the
- * meal_history row for that date, snapshotted when the suggestion was made,
+ * Builds a signed GET link for the daily email's buttons. Only identifiers
+ * travel in the URL — the ML feature context lives on the meal_history and
+ * meal_offers rows for that date, snapshotted when the suggestion was made,
  * so clicking days later still records the right context.
  */
 export function buildFeedbackLink(appUrl: string, p: FeedbackLinkParams): string {
   const params = new URLSearchParams({
     mealId: String(p.mealId),
     date: p.date,
-    accepted: String(p.accepted),
+    action: p.action,
     sig: sign(p),
   });
+  if (p.reason) params.set("reason", p.reason);
   return `${appUrl}/api/feedback/respond?${params.toString()}`;
 }
 

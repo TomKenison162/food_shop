@@ -257,6 +257,64 @@ describe("decideTonightsDinner", () => {
       expect(seen.size).toBe(3);
     });
 
+    it("offers distinct alternatives alongside the primary", () => {
+      const result = decideTonightsDinner(
+        input({
+          approvedMeals: [meal({ id: 1 }), meal({ id: 2 }), meal({ id: 3 }), meal({ id: 4 })],
+          random: () => 0.5,
+        })
+      );
+      expect(result?.alternatives).toHaveLength(2);
+      const ids = [result!.meal.id, ...result!.alternatives.map((m) => m.id)];
+      expect(new Set(ids).size).toBe(3); // no meal offered twice in one email
+    });
+
+    it("never offers a meal the rules excluded as an alternative", () => {
+      // The alternatives are one click from being cooked, so they have to
+      // clear the same bar as the primary — an excluded meal must not sneak
+      // back in as a runner-up.
+      const result = decideTonightsDinner(
+        input({
+          approvedMeals: [
+            meal({ id: 1, primaryProtein: "fish" }),
+            meal({ id: 2, primaryProtein: "beef" }),
+            meal({ id: 3, primaryProtein: "pork" }),
+          ],
+          yesterdaysProtein: "beef",
+        })
+      );
+      const offered = [result!.meal.id, ...result!.alternatives.map((m) => m.id)];
+      expect(offered).not.toContain(2);
+    });
+
+    it("offers fewer alternatives than asked rather than repeating", () => {
+      const result = decideTonightsDinner(
+        input({ approvedMeals: [meal({ id: 1 }), meal({ id: 2 })], alternativesWanted: 5 })
+      );
+      expect(result?.alternatives).toHaveLength(1);
+    });
+
+    it("varies the alternatives it offers across evenings", () => {
+      // Fixed runners-up would keep asking about the same meals and teach
+      // the model nothing about the rest of the queue.
+      const pool = [meal({ id: 1 }), meal({ id: 2 }), meal({ id: 3 }), meal({ id: 4 }), meal({ id: 5 })];
+      const scores = new Map([
+        [1, 0.9],
+        [2, 0.8],
+        [3, 0.7],
+        [4, 0.6],
+        [5, 0.5],
+      ]);
+      const seen = new Set<number>();
+      for (let i = 0; i < 200; i++) {
+        const r = decideTonightsDinner(
+          input({ approvedMeals: pool, scores, random: () => i / 200 })
+        );
+        r!.alternatives.forEach((m) => seen.add(m.id));
+      }
+      expect(seen.size).toBeGreaterThan(2);
+    });
+
     it("only ranks candidates that survived the rules", () => {
       // Meal 2 scores highest but shares yesterday's protein, so it's out.
       const result = decideTonightsDinner(

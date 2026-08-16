@@ -17,17 +17,29 @@ export interface RotationInput {
   weeklyBudget: number;
   /** mealId -> P(accepted) from the trained model, or null when no model exists yet. */
   scores: Map<number, number> | null;
+  /** How many runners-up to offer alongside the primary pick. Default 2. */
+  alternativesWanted?: number;
   /** Injectable for deterministic tests. */
   random?: () => number;
 }
 
 export interface RotationDecision {
   meal: MealRecord;
+  /**
+   * Runners-up from the same rule-filtered pool, offered in the same email.
+   * Whichever gets clicked is a comparative judgement between meals that
+   * shared a context exactly — the densest preference signal available, and
+   * the reason one evening now yields several training examples instead of
+   * one noisy bit.
+   */
+  alternatives: MealRecord[];
   relaxedProteinRule: boolean;
   relaxedRepeatRule: boolean;
   relaxedBudgetRule: boolean;
   usedModel: boolean;
 }
+
+export const DEFAULT_ALTERNATIVES = 2;
 
 /**
  * Pure meal-selection logic — no database, no clock, no network — so the
@@ -89,8 +101,50 @@ export function decideTonightsDinner(input: RotationInput): RotationDecision | n
     pool = [cheapestOf(pool, portions)];
   }
 
-  const { meal, usedModel } = pick(pool, input.scores, random);
-  return { meal, relaxedProteinRule, relaxedRepeatRule, relaxedBudgetRule, usedModel };
+  const wanted = 1 + (input.alternativesWanted ?? DEFAULT_ALTERNATIVES);
+  const { meals: picked, usedModel } = sampleDistinct(pool, input.scores, random, wanted);
+
+  return {
+    meal: picked[0],
+    alternatives: picked.slice(1),
+    relaxedProteinRule,
+    relaxedRepeatRule,
+    relaxedBudgetRule,
+    usedModel,
+  };
+}
+
+/**
+ * Draws `count` distinct meals, best-first, by repeated softmax sampling
+ * without replacement.
+ *
+ * Sampling the alternatives (rather than taking the next-highest scorers)
+ * matters for the same reason it matters for the primary: the runners-up are
+ * what generate comparative training data, so a fixed top-3 would keep
+ * asking about the same three meals and teach the model nothing about the
+ * rest of the queue.
+ */
+function sampleDistinct(
+  pool: MealRecord[],
+  scores: Map<number, number> | null,
+  random: () => number,
+  count: number
+): { meals: MealRecord[]; usedModel: boolean } {
+  const remaining = [...pool];
+  const chosen: MealRecord[] = [];
+  let usedModel = false;
+
+  while (chosen.length < count && remaining.length > 0) {
+    const result = pick(remaining, scores, random);
+    usedModel = result.usedModel;
+    chosen.push(result.meal);
+    remaining.splice(
+      remaining.findIndex((m) => m.id === result.meal.id),
+      1
+    );
+  }
+
+  return { meals: chosen, usedModel };
 }
 
 /**

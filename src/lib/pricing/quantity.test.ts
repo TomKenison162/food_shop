@@ -117,3 +117,29 @@ describe("unit words carried by the ingredient name", () => {
     expect(parseQuantityToGrams("2", "chicken breasts").grams).toBe(360);
   });
 });
+
+describe("piece weights that caused real over-buying", () => {
+  // Every case here was measured on a real priced meal before being fixed.
+  it("treats spring onions as garnish, not as onions", () => {
+    // "4 spring onions" hit the `onion` key at 150g => 600g => six 100g
+    // bunches at £1.20 = £7.20 for a garnish, in two separate dishes.
+    expect(gramsPerPiece("spring onion")).toBeLessThan(30);
+    expect(parseQuantityToGrams("4", "spring onions").grams).toBeLessThan(100);
+  });
+
+  it("sizes sausages individually rather than at the default", () => {
+    expect(parseQuantityToGrams("6", "pork sausages").grams).toBeLessThan(500);
+  });
+
+  it("sizes chillies and leaves as the trivial amounts they are", () => {
+    expect(gramsPerPiece("red chilli")).toBeLessThan(30);
+    expect(gramsPerPiece("bay leaf")).toBeLessThan(5);
+    expect(gramsPerPiece("garlic clove")).toBeLessThan(15);
+  });
+
+  it("still sizes whole joints correctly", () => {
+    // The fix must not shrink genuinely large items.
+    expect(gramsPerPiece("whole chicken")).toBeGreaterThan(1000);
+    expect(gramsPerPiece("lamb shank")).toBeGreaterThan(200);
+  });
+});

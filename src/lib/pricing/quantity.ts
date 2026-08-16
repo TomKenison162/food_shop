@@ -99,6 +99,50 @@ const INGREDIENT_PIECE_GRAMS: Record<string, number> = {
   lettuce: 300,
   cabbage: 900,
   egg: 55,
+  // Small aromatics and garnishes. These matter more than their size
+  // suggests: without an entry, "4 spring onions" fell through to the
+  // 120g default (and worse, matched the `onion` key at 150g), asking for
+  // 600g of spring onion — six bunches, £7.20, for a garnish.
+  "spring onion": 15,
+  chilli: 15,
+  "red chilli": 15,
+  "green chilli": 15,
+  "birds eye chilli": 3,
+  "lime leaf": 1,
+  "bay leaf": 0.2,
+  "kaffir lime leaf": 1,
+  "sage leaf": 1,
+  "basil leaf": 1,
+  "garlic clove": 5,
+  clove: 5,
+  "spring roll wrapper": 10,
+  "gyoza wrapper": 6,
+  // Butchery by the piece.
+  sausage: 60,
+  "toulouse sausage": 90,
+  "merguez sausage": 60,
+  "chicken wing": 90,
+  "chicken drumstick": 110,
+  "lamb shank": 350,
+  "beef short rib": 250,
+  rib: 100,
+  "pork rib": 100,
+  "anchovy fillet": 5,
+  olive: 4,
+  // Produce not already covered.
+  "celery stick": 40,
+  leek: 150,
+  courgette: 200,
+  tomato: 90,
+  mushroom: 20,
+  "preserved lemon": 40,
+  "spring greens": 300,
+  avocado: 200,
+  banana: 120,
+  // Bakery / wraps not already covered.
+  "sub roll": 85,
+  "corn tortilla": 30,
+  tostada: 20,
 };
 
 const GRAMS_PER_PIECE_DEFAULT = 120;

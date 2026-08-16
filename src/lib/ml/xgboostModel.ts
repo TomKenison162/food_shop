@@ -15,6 +15,11 @@ const MODEL_PARAMS = {
   subsample: 0.8,
   colsample_bytree: 0.8,
   lambda: 2,
+  // Refuse to split on evidence thinner than a few examples. With 26
+  // features and only tens of rows the default of 1 lets a leaf form around
+  // a single evening, which is exactly the overfitting that makes the
+  // leave-one-out gate reject a model and delays it being useful.
+  min_child_weight: 3,
   verbosity: 0 as const,
 };
 

@@ -123,12 +123,31 @@ export const mealHistory = pgTable(
     dayOfWeek: integer("day_of_week"), // 0=Sunday .. 6=Saturday
     isWeekend: boolean("is_weekend"),
     temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }),
+    /** Feels-like reading, and rain in mm. Snapshotted because weather cannot be re-fetched for a past date. */
+    apparentTemperatureC: numeric("apparent_temperature_c", { precision: 5, scale: 1 }),
+    precipitationMm: numeric("precipitation_mm", { precision: 5, scale: 2 }),
     pantryOverlapGrams: numeric("pantry_overlap_grams", { precision: 8, scale: 1 }),
     daysSinceLastServed: integer("days_since_last_served"),
     proteinDaysSinceLastServed: integer("protein_days_since_last_served"),
     ingredientsCount: integer("ingredients_count"),
+    /**
+     * Whether the trained model actually ranked this pick, or it was a
+     * random choice among the meals the rules allowed. Without it there is
+     * no way to tell afterwards which suggestions the model was responsible
+     * for, so no way to judge whether it is earning its place.
+     */
+    usedModel: boolean("used_model").notNull().default(false),
     // --- label ---
     accepted: boolean("accepted"),
+    /**
+     * Why a suggestion was declined. A bare "no" conflates genuinely
+     * different things — not fancying a dish, it being too expensive, it
+     * being too much effort on a Tuesday, and simply not being home — and a
+     * model trained on the union of those learns none of them. Crucially
+     * "not_home" is not a preference at all and is excluded from training
+     * entirely; see buildTrainingSet in src/lib/ml/model.ts.
+     */
+    declineReason: varchar("decline_reason", { length: 30 }),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
     /** Set once the reminder for this date has gone out, so hourly polling can't re-send. */
     emailedAt: timestamp("emailed_at", { withTimezone: true }),
@@ -143,6 +162,60 @@ export const mealHistory = pgTable(
   },
   (t) => ({
     servedDateIdx: index("meal_history_served_date_idx").on(t.servedDate),
+  })
+);
+
+/**
+ * One row per meal *offered* on a given date — the preference training set.
+ *
+ * The daily email presents a primary pick plus alternatives, and whichever
+ * one gets clicked is a genuine comparative judgement: "this, over those,
+ * tonight". That is far denser signal than the old accept/decline bit. One
+ * evening produces a positive and two negatives that share a context
+ * exactly, so the model learns what distinguishes meals rather than what
+ * distinguishes Tuesdays — and it arrives whether or not the reply is a
+ * refusal, so engagement produces data every time.
+ *
+ * The per-meal feature snapshot is duplicated here rather than recomputed at
+ * train time for the same reason meal_history snapshots it: pantry state,
+ * recency and weather all drift, and weather can't be re-fetched for a past
+ * date. A non-chosen meal's features must be the ones it was rejected under.
+ */
+export const mealOffers = pgTable(
+  "meal_offers",
+  {
+    id: serial("id").primaryKey(),
+    mealId: integer("meal_id")
+      .notNull()
+      .references(() => meals.id, { onDelete: "cascade" }),
+    /** YYYY-MM-DD (Europe/London) the offer was made for. */
+    servedDate: varchar("served_date", { length: 10 }).notNull(),
+    /** Groups the meals shown together, so pairs are only drawn within one email. */
+    offerGroup: varchar("offer_group", { length: 40 }).notNull(),
+    /** True for the one that was clicked. NULL-free: unclicked offers are real negatives. */
+    wasChosen: boolean("was_chosen").notNull().default(false),
+    /** True for the meal the engine led with, so lead-bias can be measured. */
+    wasPrimary: boolean("was_primary").notNull().default(false),
+    /** Set once any option in the group is clicked; unanswered groups train nothing. */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    // --- context snapshot, identical shape to meal_history's ---
+    dayOfWeek: integer("day_of_week"),
+    isWeekend: boolean("is_weekend"),
+    temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }),
+    /** Feels-like reading, and rain in mm. Snapshotted because weather cannot be re-fetched for a past date. */
+    apparentTemperatureC: numeric("apparent_temperature_c", { precision: 5, scale: 1 }),
+    precipitationMm: numeric("precipitation_mm", { precision: 5, scale: 2 }),
+    pantryOverlapGrams: numeric("pantry_overlap_grams", { precision: 8, scale: 1 }),
+    daysSinceLastServed: integer("days_since_last_served"),
+    proteinDaysSinceLastServed: integer("protein_days_since_last_served"),
+    ingredientsCount: integer("ingredients_count"),
+    /** Whether the model ranked this offer group, or it was a random pick among rule survivors. */
+    usedModel: boolean("used_model").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    offerGroupIdx: index("meal_offers_group_idx").on(t.offerGroup),
+    offerDateIdx: index("meal_offers_served_date_idx").on(t.servedDate),
   })
 );
 

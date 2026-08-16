@@ -2,10 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { meals, mealHistory } from "@/lib/db/schema";
-import { verifyFeedbackLink } from "@/lib/feedbackLink";
+import { verifyFeedbackLink, type FeedbackAction } from "@/lib/feedbackLink";
+import { DECLINE_LABELS, isDeclineReason, type DeclineReason } from "@/lib/declineReasons";
 import { recordMealCooked } from "@/lib/pantry/pantry";
 import { sendDinnerReminder } from "@/lib/email/sendReminder";
-import { getPlannedMeal, replacePlanForDate } from "@/lib/rotation";
+import {
+  getPlannedMeal,
+  offerGroupFor,
+  replacePlanForDate,
+  resolveOffer,
+  resolveOfferAsDeclined,
+  setPlanForDate,
+  type RotationResult,
+} from "@/lib/rotation";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -20,10 +29,6 @@ function htmlPage(body: string): NextResponse {
         .card{max-width:32rem}
         h1{font-size:1.5rem;margin:0 0 .5rem}
         p{color:#9ca3af;line-height:1.5}
-        ol{text-align:left;color:#d1d5db}
-        a.btn{display:inline-block;background:#f3f4f6;color:#111827;padding:10px 20px;
-              border-radius:999px;text-decoration:none;margin:4px}
-        a.btn.secondary{background:#374151;color:#f3f4f6}
       </style>
     </head><body><div class="card">${body}</div></body></html>`,
     { headers: { "Content-Type": "text/html; charset=utf-8" } }
@@ -42,41 +47,83 @@ async function livePlanName(date: string): Promise<string | null> {
   return meal?.name ?? null;
 }
 
+/** Emails the full detail for a newly-committed plan and stamps it as sent. */
+async function emailPlan(result: RotationResult, date: string): Promise<string | null> {
+  const sent = await sendDinnerReminder(result);
+  if (!sent.sent) return sent.reason ?? "unknown reason";
+  const fresh = await getPlannedMeal(date);
+  if (fresh) {
+    await db.update(mealHistory).set({ emailedAt: new Date() }).where(eq(mealHistory.id, fresh.id));
+  }
+  return null;
+}
+
 /**
- * The Yes/No links from the daily email — the model's real training signal.
- * Labels the meal_history row for that date (which already holds the
- * feature context, snapshotted when the suggestion was made).
+ * The daily email's buttons — and the entire training signal for the model.
  *
- * A "No" supersedes the plan and emails a different dinner, because "not
- * that" without an alternative leaves you exactly where you started. The
- * declined row is kept as a genuine negative training example.
+ * Three actions, because a single accept/decline bit was too coarse to learn
+ * from. "No" used to mean any of: not fancying the dish, it being too
+ * expensive, too much effort, or simply not being home — and a model fed the
+ * union of those learns none of them, which is why it kept failing the
+ * baseline gate.
  *
- * Two things are deliberately NOT done here, because this route runs while
- * someone is staring at a loading spinner:
- *  - Retraining. trainModel() runs leave-one-out CV, i.e. one full XGBoost
- *    fit per labelled example, which blew past the function timeout — the
- *    click appeared to hang, and re-clicking hit the "already replaced"
- *    path below. It now runs in the daily cron instead.
- *  - Rendering the replacement inline. The alternative goes out by email so
- *    it's on your phone at the shop, not stuck in a browser tab.
+ *  - accept  : the meal led with was cooked
+ *  - choose  : an alternative was preferred, which labels the whole offer
+ *              group at once (one winner, the rest genuine losers under an
+ *              identical context)
+ *  - decline : none of them, with a reason. "not_home" is recorded but never
+ *              trained on — it says nothing about food.
  *
- * Exempt from the login gate (see src/middleware.ts): it's clicked from an
- * email client with no session, and is authenticated by its HMAC signature.
+ * Deliberately does no model training: leave-one-out CV is far too slow for
+ * a request someone is waiting on (it used to time out here). The daily cron
+ * retrains instead.
+ *
+ * Exempt from the login gate (see src/middleware.ts): clicked from an email
+ * client with no session, authenticated by the HMAC signature.
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const mealId = Number(sp.get("mealId"));
   const date = sp.get("date") ?? "";
-  const accepted = sp.get("accepted") === "true";
+  const action = (sp.get("action") ?? "") as FeedbackAction;
+  const rawReason = sp.get("reason");
   const sig = sp.get("sig") ?? "";
 
-  if (!Number.isInteger(mealId) || !date) {
+  if (!Number.isInteger(mealId) || !date || !["accept", "choose", "decline"].includes(action)) {
     return htmlPage("<p>That link looks malformed.</p>");
   }
-  if (!verifyFeedbackLink({ mealId, date, accepted }, sig)) {
+
+  const reason: DeclineReason | null =
+    rawReason && isDeclineReason(rawReason) ? rawReason : null;
+  if (action === "decline" && !reason) {
+    return htmlPage("<p>That link looks malformed.</p>");
+  }
+  if (!verifyFeedbackLink({ mealId, date, action, reason }, sig)) {
     return htmlPage("<p>That link isn't valid.</p>");
   }
 
+  const offerGroup = await offerGroupFor(date, mealId);
+  const live = await getPlannedMeal(date);
+
+  // --- an alternative was preferred ---------------------------------------
+  if (action === "choose") {
+    if (live?.mealId === mealId) {
+      return htmlPage(`<h1>Already set.</h1><p>That's tonight's plan already.</p>`);
+    }
+    if (offerGroup) await resolveOffer(offerGroup, mealId);
+
+    const result = await setPlanForDate(date, mealId);
+    if (!result) return htmlPage("<p>That meal isn't available any more.</p>");
+
+    const failure = await emailPlan(result, date);
+    return htmlPage(
+      failure
+        ? `<h1>${esc(result.meal.name)}</h1><p>Set as tonight's dinner, but the email didn't go out: ${esc(failure)}</p>`
+        : `<h1>${esc(result.meal.name)} it is.</h1><p>The full recipe and shopping list are on their way to your inbox.</p>`
+    );
+  }
+
+  // --- accept / decline both label the live plan row -----------------------
   const row = await db.query.mealHistory.findFirst({
     where: and(
       eq(mealHistory.servedDate, date),
@@ -86,58 +133,60 @@ export async function GET(req: NextRequest) {
   });
 
   // Emails don't expire, so the same link gets clicked twice often —
-  // impatiently, or days later. Both dead ends below used to say only that
-  // the link was spent, which reads like a failure. Say what's actually
-  // planned instead, so a stale click is still informative.
+  // impatiently, or days later. Say what's actually planned rather than
+  // dead-ending on a spent link.
   if (!row || row.accepted !== null) {
     const current = await livePlanName(date);
-    const heading = !row ? "Already replaced." : "Already recorded.";
     return htmlPage(
-      `<h1>${heading}</h1>` +
+      `<h1>${!row ? "Already replaced." : "Already recorded."}</h1>` +
         (current
-          ? `<p>Tonight's plan is <strong>${esc(current)}</strong> — check your inbox for the full email.</p>`
+          ? `<p>Tonight's plan is <strong>${esc(current)}</strong>. The full email is in your inbox.</p>`
           : `<p>There's no dinner planned for ${esc(date)} right now.</p>`)
     );
   }
 
-  await db
-    .update(mealHistory)
-    .set({ accepted, respondedAt: new Date() })
-    .where(eq(mealHistory.id, row.id));
-
-  if (accepted) {
-    // The only point at which the app knows real food was bought and cooked.
+  if (action === "accept") {
+    await db
+      .update(mealHistory)
+      .set({ accepted: true, respondedAt: new Date() })
+      .where(eq(mealHistory.id, row.id));
+    if (offerGroup) await resolveOffer(offerGroup, mealId);
+    // The one point at which the app knows real food was bought and cooked.
     await recordMealCooked(mealId);
-    return htmlPage(`<h1>Enjoy.</h1><p>Noted — glad it landed.</p>`);
+    return htmlPage(`<h1>Enjoy.</h1><p>Noted. Glad it landed.</p>`);
   }
 
-  // Declined: pick a genuine alternative rather than leaving them stuck.
+  // --- declined, with a reason --------------------------------------------
+  await db
+    .update(mealHistory)
+    .set({ accepted: false, declineReason: reason, respondedAt: new Date() })
+    .where(eq(mealHistory.id, row.id));
+  if (offerGroup) await resolveOfferAsDeclined(offerGroup);
+
+  // "Not home" isn't a verdict on the food, so there's nothing to replace it
+  // with — suggesting another dinner to someone who's out is just noise.
+  if (reason === "not_home") {
+    return htmlPage(
+      `<h1>Have a good evening.</h1>
+       <p>Nothing else suggested tonight. This won't be counted as disliking ${esc(
+         (await db.query.meals.findFirst({ where: eq(meals.id, mealId) }))?.name ?? "the meal"
+       )}.</p>`
+    );
+  }
+
   const replacement = await replacePlanForDate(date);
   if (!replacement) {
     return htmlPage(
-      `<h1>Noted.</h1><p>Nothing else in your queue fits today's rules — you're on your own tonight.</p>`
+      `<h1>Noted: ${esc(DECLINE_LABELS[reason!].toLowerCase())}.</h1>
+       <p>Nothing else in your queue fits today's rules, so you're on your own tonight.</p>`
     );
   }
 
-  const emailResult = await sendDinnerReminder(replacement);
-  if (!emailResult.sent) {
-    return htmlPage(
-      `<h1>${esc(replacement.meal.name)}</h1>
-       <p>That's your new suggestion, but the email didn't go out: ${esc(
-         emailResult.reason ?? "unknown reason"
-       )}</p>`
-    );
-  }
-
-  // Stamp the replacement as emailed, or the 17:00 run would find an
-  // un-emailed plan for today and send the same meal a second time.
-  const fresh = await getPlannedMeal(date);
-  if (fresh) {
-    await db.update(mealHistory).set({ emailedAt: new Date() }).where(eq(mealHistory.id, fresh.id));
-  }
-
-  return htmlPage(`
-    <h1>New one sent.</h1>
-    <p><strong>${esc(replacement.meal.name)}</strong> is on its way to your inbox, with the method and shopping list.</p>
-  `);
+  const failure = await emailPlan(replacement, date);
+  return htmlPage(
+    failure
+      ? `<h1>${esc(replacement.meal.name)}</h1><p>That's your new suggestion, but the email didn't go out: ${esc(failure)}</p>`
+      : `<h1>New one sent.</h1>
+         <p><strong>${esc(replacement.meal.name)}</strong> is on its way to your inbox, with the method and shopping list.</p>`
+  );
 }

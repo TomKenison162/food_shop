@@ -96,7 +96,74 @@ const CONFLICTS: { ingredient: RegExp; sku: RegExp }[] = [
   { ingredient: /\bsteaks?\b/, sku: /\bmince\b/ },
   { ingredient: /\bstock\b/, sku: /stockings?/ },
   { ingredient: /\bcream\b/, sku: /ice cream|cream soda/ },
+
+  // The fruit is not the leaf. "2 limes" matched "Fresh Packed Lime Leaves
+  // 4 Pack" on the shared token, and since a leaf weighs ~1g the quantity
+  // maths then demanded eight packs: £16 of lime leaves for two limes.
+  // ...unless the recipe genuinely wants the leaf: "kaffir lime leaves"
+  // shares the token but is a different ingredient, correctly matched.
+  { ingredient: /^(?!.*(leaf|leaves|kaffir)).*\blimes?\b/, sku: /lime leaf|lime leaves|kaffir/ },
+  { ingredient: /\blemons?\b/, sku: /lemon ?grass|lemon balm|lemonade/ },
+
+  // Wine colour is not negotiable in a braise. "red wine" matched a
+  // Sauvignon Blanc purely on the token "wine".
+  { ingredient: /\bred wine\b/, sku: /white wine|sauvignon|pinot grigio|chardonnay|prosecco|ros[ée]/ },
+  { ingredient: /\bwhite wine\b/, sku: /red wine|merlot|shiraz|malbec|rioja|cabernet/ },
+
+  // Cooking stock, not a finished bowl of soup — "chicken stock" matched an
+  // Itsu ramen broth at £2.70 per 500ml, so 1.2L cost £8.10 instead of pence.
+  { ingredient: /\bstock\b/, sku: /ramen|noodle|soup|cup a soup|broth bowl/ },
+
+  // Cut matters, both for price and for the recipe. Sirloin is not diced
+  // stewing beef; a shoulder joint is not a pack of grill steaks.
+  { ingredient: /\bsirloin|rump|skirt|fillet steak|steaks?\b/, sku: /\bdiced\b|stewing|casserole/ },
+  { ingredient: /shoulder|\bjoint\b|whole \w+/, sku: /grill steaks?|\bchops?\b|\bmince\b|\bdiced\b/ },
+  { ingredient: /\bmince\b/, sku: /\bdiced\b|\bsteaks?\b|\bjoint\b/ },
+  { ingredient: /\bbreasts?\b/, sku: /\blegs?\b|\bthighs?\b|\bwings?\b|\bdrumsticks?\b/ },
+  { ingredient: /\blegs?\b|\bthighs?\b/, sku: /\bbreasts?\b/ },
+
+  // Fresh vs preserved/processed forms price completely differently.
+  { ingredient: /^(?!.*juice).*\blimes?\b|\blemons?\b|\boranges?\b/, sku: /\bjuice\b|squash|cordial/ },
 ];
+
+/**
+ * Premium ranges cost multiples of the standard line for the same
+ * ingredient. Left unranked, whichever the API happened to return first
+ * won — which is how a 500g pack of organic diced beef became the match for
+ * plain "beef sirloin" in five separate dishes.
+ */
+const PREMIUM_MARKERS =
+  /\borganic\b|taste the difference|finest|luxury|free range|\bpremium\b|specially selected|artisan|\bwagyu\b|\baged\b/;
+
+/**
+ * How well a product name answers an ingredient, higher is better.
+ *
+ * Used to *rank* plausible candidates rather than take the first one the API
+ * returned. Three things decide it: how much of the ingredient name is
+ * actually present, whether the product is from a premium range, and how
+ * much unrelated wording it carries (a long name usually means a prepared
+ * product rather than the raw ingredient).
+ */
+export function scoreProductMatch(skuName: string, ingredientName: string): number {
+  const a = skuName.toLowerCase().trim();
+  const b = ingredientName.toLowerCase().trim();
+
+  const skuTokens = new Set(tokens(a).map(normalise));
+  const ingTokens = tokens(b).map(normalise);
+  if (ingTokens.length === 0) return 0;
+
+  const covered = ingTokens.filter((t) => skuTokens.has(t)).length;
+  let score = covered / ingTokens.length; // 0..1, how much of the ingredient is present
+
+  if (a.includes(b)) score += 0.5; // the whole ingredient name appears verbatim
+  if (PREMIUM_MARKERS.test(a)) score -= 0.4;
+
+  // Every extra word beyond the ingredient is a small signal of a prepared
+  // or flavoured product ("Chicken & Bacon Pasta Bake" for "chicken").
+  score -= Math.max(0, skuTokens.size - ingTokens.length) * 0.02;
+
+  return score;
+}
 
 export function matchesIngredient(itemName: string, ingredientName: string): boolean {
   const a = itemName.toLowerCase().trim();

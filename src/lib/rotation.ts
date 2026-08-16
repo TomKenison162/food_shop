@@ -1,9 +1,9 @@
-import { and, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { approvedQueue, meals, mealHistory, mealIngredients } from "./db/schema";
+import { approvedQueue, meals, mealHistory, mealIngredients, mealOffers } from "./db/schema";
 import { addDaysToDateString, dayOfWeekForDateString, londonDateString } from "./date";
 import { pantryOverlapGrams } from "./pantry/pantry";
-import { getCurrentTemperatureC } from "./weather/weather";
+import { getCurrentWeather } from "./weather/weather";
 import { scoreMealsForTonight } from "./ml/model";
 import { getPortionsSetting } from "./settings";
 import { spentInWeek } from "./budgetSpend";
@@ -17,6 +17,10 @@ export type PlannedMeal = typeof mealHistory.$inferSelect;
 
 export interface RotationResult {
   meal: MealRecord;
+  /** Runners-up offered in the same email; clicking one is a preference label. */
+  alternatives: MealRecord[];
+  /** Ties this email's options together so preference pairs stay within one offer. */
+  offerGroup: string;
   /** The date this plan is for (YYYY-MM-DD, Europe/London). */
   planDate: string;
   portions: 1 | 2;
@@ -59,8 +63,11 @@ export async function planMealForDate(
     const meal = await db.query.meals.findFirst({ where: eq(meals.id, existing.mealId) });
     if (meal) {
       const [spent, firstShopSpent] = await spendTotals(date);
+      const prior = await latestOfferForDate(date);
       return {
         meal,
+        alternatives: prior.alternatives,
+        offerGroup: prior.offerGroup,
         planDate: date,
         portions: existing.portions === 1 ? 1 : 2,
         cost: existing.costIncurred !== null ? Number(existing.costIncurred) : null,
@@ -69,6 +76,8 @@ export async function planMealForDate(
           dayOfWeek: existing.dayOfWeek ?? dayOfWeekForDateString(date),
           isWeekend: existing.isWeekend ?? false,
           temperatureC: existing.temperatureC !== null ? Number(existing.temperatureC) : null,
+          apparentTemperatureC: existing.apparentTemperatureC !== null ? Number(existing.apparentTemperatureC) : null,
+          precipitationMm: existing.precipitationMm !== null ? Number(existing.precipitationMm) : null,
         },
         alreadySelectedToday: true,
         relaxedProteinRule: false,
@@ -87,7 +96,9 @@ export async function planMealForDate(
     isWeekend: dow === 0 || dow === 6,
     // Weather is only meaningful for today; a plan built days ahead can't
     // know it, and guessing would poison the training snapshot.
-    temperatureC: date === londonDateString(now) ? await getCurrentTemperatureC() : null,
+    ...(date === londonDateString(now)
+      ? await getCurrentWeather()
+      : { temperatureC: null, apparentTemperatureC: null, precipitationMm: null }),
   };
 
   const approvedMeals = (await approvedMealRecords()).filter((m) => !excludeMealIds.includes(m.id));
@@ -142,10 +153,13 @@ export async function planMealForDate(
     dayOfWeek: context.dayOfWeek,
     isWeekend: context.isWeekend,
     temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
+    apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
+    precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
     pantryOverlapGrams: String(overlap),
     daysSinceLastServed: lastServed,
     proteinDaysSinceLastServed: proteinLastServed,
     ingredientsCount: ingredientCount,
+    usedModel: decision.usedModel,
   });
 
   // No pantry side effects here on purpose. Planning a meal only *proposes*
@@ -153,8 +167,17 @@ export async function planMealForDate(
   // actually bought and cooked (see recordMealCooked). The snapshot above is
   // still taken pre-cook, which is exactly the state the suggestion was made in.
 
+  // Every meal shown tonight is recorded with its own feature snapshot, not
+  // just the one led with. Whichever gets clicked turns the whole group into
+  // labelled comparisons; if none does, the group stays unresolved and
+  // trains nothing.
+  const offerGroup = `${date}:${Date.now().toString(36)}`;
+  await recordOffer(offerGroup, date, context, chosen, decision.alternatives, decision.usedModel);
+
   return {
     meal: chosen,
+    alternatives: decision.alternatives,
+    offerGroup,
     planDate: date,
     portions,
     cost,
@@ -168,6 +191,192 @@ export async function planMealForDate(
     spentThisWeekGBP: spentThisWeek + (cost ?? 0),
     firstShopSpentThisWeekGBP: firstShopSpentThisWeek + (firstShop ?? 0),
   };
+}
+
+/**
+ * Makes `mealId` the live plan for `date` — used when an alternative from
+ * the email is picked, where the engine must defer to an explicit choice
+ * rather than re-running selection.
+ *
+ * The superseded row keeps whatever label it had: it was genuinely offered
+ * and genuinely passed over, which is exactly the comparison the preference
+ * model learns from.
+ */
+export async function setPlanForDate(date: string, mealId: number): Promise<RotationResult | null> {
+  const meal = await db.query.meals.findFirst({ where: eq(meals.id, mealId) });
+  if (!meal || meal.deletedAt !== null) return null;
+
+  await db
+    .update(mealHistory)
+    .set({ supersededAt: new Date() })
+    .where(and(eq(mealHistory.servedDate, date), isNull(mealHistory.supersededAt)));
+
+  const portions = await getPortionsSetting();
+  const dow = dayOfWeekForDateString(date);
+  const context: FeatureContext = {
+    dayOfWeek: dow,
+    isWeekend: dow === 0 || dow === 6,
+    ...(date === londonDateString()
+      ? await getCurrentWeather()
+      : { temperatureC: null, apparentTemperatureC: null, precipitationMm: null }),
+  };
+
+  const cost = costForPortions(meal, portions);
+  const firstShop = firstShopCostForPortions(meal, portions);
+  const [overlap, ingredientCount, lastServed, proteinLastServed] = await Promise.all([
+    pantryOverlapGrams(meal.id),
+    countIngredients(meal.id),
+    daysSinceLastServed(meal.id, date),
+    proteinDaysSinceLastServed(meal.primaryProtein, date),
+  ]);
+
+  await db.insert(mealHistory).values({
+    mealId: meal.id,
+    primaryProtein: meal.primaryProtein,
+    servedDate: date,
+    portions,
+    costIncurred: cost !== null ? String(cost) : null,
+    firstShopCost: firstShop !== null ? String(firstShop) : null,
+    dayOfWeek: context.dayOfWeek,
+    isWeekend: context.isWeekend,
+    temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
+    apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
+    precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
+    pantryOverlapGrams: String(overlap),
+    daysSinceLastServed: lastServed,
+    proteinDaysSinceLastServed: proteinLastServed,
+    ingredientsCount: ingredientCount,
+    // An explicitly chosen alternative is your decision, not a prediction.
+    usedModel: false,
+  });
+
+  const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(date);
+  const prior = await latestOfferForDate(date);
+
+  return {
+    meal,
+    alternatives: prior.alternatives.filter((m) => m.id !== meal.id),
+    offerGroup: prior.offerGroup,
+    planDate: date,
+    portions,
+    cost,
+    firstShopCost: firstShop,
+    context,
+    alreadySelectedToday: false,
+    relaxedProteinRule: false,
+    relaxedRepeatRule: false,
+    relaxedBudgetRule: false,
+    usedModel: false,
+    spentThisWeekGBP: spentThisWeek + (cost ?? 0),
+    firstShopSpentThisWeekGBP: firstShopSpentThisWeek + (firstShop ?? 0),
+  };
+}
+
+/**
+ * Writes one row per meal shown in an email, each with its own feature
+ * snapshot taken now — a non-chosen meal has to be judged on the state it
+ * was actually offered under, and pantry, recency and weather all drift.
+ */
+async function recordOffer(
+  offerGroup: string,
+  date: string,
+  context: FeatureContext,
+  primary: MealRecord,
+  alternatives: MealRecord[],
+  usedModel: boolean
+): Promise<void> {
+  const offered = [primary, ...alternatives];
+
+  const rows = await Promise.all(
+    offered.map(async (meal, i) => {
+      const [overlap, ingredientCount, lastServed, proteinLastServed] = await Promise.all([
+        pantryOverlapGrams(meal.id),
+        countIngredients(meal.id),
+        daysSinceLastServed(meal.id, date),
+        proteinDaysSinceLastServed(meal.primaryProtein, date),
+      ]);
+      return {
+        mealId: meal.id,
+        servedDate: date,
+        offerGroup,
+        wasPrimary: i === 0,
+        wasChosen: false,
+        dayOfWeek: context.dayOfWeek,
+        isWeekend: context.isWeekend,
+        temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
+        apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
+        precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
+        pantryOverlapGrams: String(overlap),
+        daysSinceLastServed: lastServed,
+        proteinDaysSinceLastServed: proteinLastServed,
+        ingredientsCount: ingredientCount,
+        usedModel,
+      };
+    })
+  );
+
+  await db.insert(mealOffers).values(rows);
+}
+
+/**
+ * Marks which meal won an offer group, turning it into training data.
+ *
+ * Resolving the whole group (not just the winner) is what makes the losers
+ * usable: an unresolved group means nobody replied, and inferring dislike
+ * from silence would be exactly the confounded label this replaced.
+ */
+export async function resolveOffer(offerGroup: string, chosenMealId: number): Promise<void> {
+  const now = new Date();
+  await db
+    .update(mealOffers)
+    .set({ resolvedAt: now, wasChosen: false })
+    .where(eq(mealOffers.offerGroup, offerGroup));
+  await db
+    .update(mealOffers)
+    .set({ resolvedAt: now, wasChosen: true })
+    .where(and(eq(mealOffers.offerGroup, offerGroup), eq(mealOffers.mealId, chosenMealId)));
+}
+
+/**
+ * Marks an offer group as answered with nobody winning — a decline of the
+ * whole slate. The losers are real negatives; there just isn't a positive.
+ */
+export async function resolveOfferAsDeclined(offerGroup: string): Promise<void> {
+  await db
+    .update(mealOffers)
+    .set({ resolvedAt: new Date() })
+    .where(eq(mealOffers.offerGroup, offerGroup));
+}
+
+/** The most recent offer group for a date, with its non-primary meals. */
+async function latestOfferForDate(
+  date: string
+): Promise<{ offerGroup: string; alternatives: MealRecord[] }> {
+  const rows = await db
+    .select()
+    .from(mealOffers)
+    .where(eq(mealOffers.servedDate, date))
+    .orderBy(desc(mealOffers.createdAt));
+
+  if (rows.length === 0) return { offerGroup: `${date}:none`, alternatives: [] };
+
+  const offerGroup = rows[0].offerGroup;
+  const altIds = rows.filter((r) => r.offerGroup === offerGroup && !r.wasPrimary).map((r) => r.mealId);
+  if (altIds.length === 0) return { offerGroup, alternatives: [] };
+
+  const alternatives = await db.select().from(meals).where(inArray(meals.id, altIds));
+  return { offerGroup, alternatives };
+}
+
+/** The offer group a given meal was part of on a date, if any. */
+export async function offerGroupFor(date: string, mealId: number): Promise<string | null> {
+  const row = await db
+    .select({ offerGroup: mealOffers.offerGroup })
+    .from(mealOffers)
+    .where(and(eq(mealOffers.servedDate, date), eq(mealOffers.mealId, mealId)))
+    .orderBy(desc(mealOffers.createdAt))
+    .limit(1);
+  return row[0]?.offerGroup ?? null;
 }
 
 /** Today's dinner (Europe/London). */
