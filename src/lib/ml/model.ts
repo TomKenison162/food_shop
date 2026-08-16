@@ -32,6 +32,8 @@ export interface TrainingSet {
   fromOffers: number;
   fromReplies: number;
   excludedNotHome: number;
+  /** Ratings of exactly 3, dropped as genuine ambivalence. */
+  excludedAmbivalent: number;
 }
 
 /**
@@ -119,19 +121,41 @@ export async function buildTrainingSet(): Promise<TrainingSet> {
     .where(isNotNull(mealHistory.accepted));
 
   let excludedNotHome = 0;
+  let excludedAmbivalent = 0;
   let fromReplies = 0;
   for (const { history, meal } of replyRows) {
     const reason = history.declineReason;
     if (reason !== null && isDeclineReason(reason) && !isPreferenceSignal(reason)) {
+      // "Not home" and "got leftovers" settle the evening without judging
+      // the food. Training on them teaches the model to dislike whatever it
+      // happened to suggest while you were busy.
       excludedNotHome++;
       continue;
     }
+
+    // A rating turns "I cooked it" into how much it was actually wanted.
+    // 3 out of 5 is genuine ambivalence and is dropped rather than being
+    // rounded into a weak yes, which would just add noise. A low rating on
+    // a meal you did cook is one of the most informative labels available:
+    // it separates "wrong dish" from "wrong evening" in a way accept/decline
+    // never could.
+    if (history.accepted && history.rating !== null) {
+      if (history.rating === 3) {
+        excludedAmbivalent++;
+        continue;
+      }
+      X.push(toVector(history, meal));
+      y.push(history.rating >= 4 ? 1 : 0);
+      fromReplies++;
+      continue;
+    }
+
     X.push(toVector(history, meal));
     y.push(history.accepted ? 1 : 0);
     fromReplies++;
   }
 
-  return { X, y, fromOffers: offerRows.length, fromReplies, excludedNotHome };
+  return { X, y, fromOffers: offerRows.length, fromReplies, excludedNotHome, excludedAmbivalent };
 }
 
 /**
@@ -144,7 +168,7 @@ export async function buildTrainingSet(): Promise<TrainingSet> {
  * one, so the gate clears in days rather than weeks.
  */
 export async function trainModel(): Promise<TrainResult> {
-  const { X, y, fromOffers, fromReplies, excludedNotHome } = await buildTrainingSet();
+  const { X, y, fromOffers, fromReplies, excludedNotHome, excludedAmbivalent } = await buildTrainingSet();
 
   const positives = y.filter((v) => v === 1).length;
   const negatives = y.length - positives;
@@ -155,7 +179,8 @@ export async function trainModel(): Promise<TrainResult> {
       reason:
         `Need at least ${MIN_SAMPLES_PER_CLASS} of each class (have ${positives} positive, ${negatives} negative` +
         ` from ${fromOffers} offer rows and ${fromReplies} replies` +
-        `${excludedNotHome > 0 ? `; ${excludedNotHome} "not home" excluded` : ""}).`,
+        `${excludedNotHome > 0 ? `; ${excludedNotHome} non-food declines excluded` : ""}` +
+        `${excludedAmbivalent > 0 ? `; ${excludedAmbivalent} rated 3/5 and dropped` : ""}).`,
       sampleCount: y.length,
     };
   }

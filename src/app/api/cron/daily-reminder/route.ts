@@ -11,6 +11,7 @@ import { purgeStalePantryItems } from "@/lib/pantry/pantry";
 import { trainModel } from "@/lib/ml/model";
 import { priceApprovedMeals } from "@/lib/pricing/priceApproved";
 import { eventLogSummary } from "@/lib/eventLog";
+import { sendWeeklyDigest } from "@/lib/email/sendDigest";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -40,6 +41,9 @@ export async function GET(req: NextRequest) {
   // "skipped, too early" response is indistinguishable from a broken
   // deployment. Still requires CRON_SECRET, so it isn't publicly callable.
   const force = req.nextUrl.searchParams.get("force") === "1";
+  // Selection can be told to clear expiring stock instead of ranking by the
+  // model. Automatic on Sundays, when a week's leftovers have piled up.
+  const useItUpParam = req.nextUrl.searchParams.get("useItUp") === "1";
 
   const hour = londonHour();
   if (!force && hour < SEND_HOUR) {
@@ -86,7 +90,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ skipped: true, reason: "Already emailed today." });
     }
 
-    const result = await selectTonightsDinner();
+    // The weekly look-back goes out alongside Sunday's reminder rather than
+    // as a second scheduled job, so there's only ever one thing to keep alive.
+    let digest: string | undefined;
+    const isSunday = new Date(`${today}T12:00:00Z`).getUTCDay() === 0;
+    if (isSunday || req.nextUrl.searchParams.get("digest") === "1") {
+      const d = await sendWeeklyDigest(today);
+      digest = d.sent ? "sent" : `not sent: ${d.reason}`;
+    }
+
+    const result = await selectTonightsDinner({ useItUp: useItUpParam || isSunday });
     if (!result) {
       return NextResponse.json({ sent: false, reason: "Approved queue is empty.", training });
     }
@@ -102,7 +115,7 @@ export async function GET(req: NextRequest) {
       .set({ emailedAt: new Date() })
       .where(eq(mealHistory.id, (await getPlannedMeal(today))!.id));
 
-    return NextResponse.json({ meal: result.meal.name, ...emailResult, training, priced: pricing.pricedMealIds.length, log: await eventLogSummary() });
+    return NextResponse.json({ meal: result.meal.name, ...emailResult, training, priced: pricing.pricedMealIds.length, digest, log: await eventLogSummary() });
   } catch (err) {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     await sendFailureAlert(message);

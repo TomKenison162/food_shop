@@ -3,7 +3,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { meals, mealHistory } from "@/lib/db/schema";
 import { verifyFeedbackLink, type FeedbackAction } from "@/lib/feedbackLink";
-import { DECLINE_LABELS, isDeclineReason, type DeclineReason } from "@/lib/declineReasons";
+import { DECLINE_LABELS, isDeclineReason, wantsReplacement, type DeclineReason } from "@/lib/declineReasons";
 import { recordMealCooked } from "@/lib/pantry/pantry";
 import { logFeedbackEvent } from "@/lib/eventLog";
 import { sendDinnerReminder } from "@/lib/email/sendReminder";
@@ -89,6 +89,7 @@ export async function GET(req: NextRequest) {
   const date = sp.get("date") ?? "";
   const action = (sp.get("action") ?? "") as FeedbackAction;
   const rawReason = sp.get("reason");
+  const rawRating = sp.get("rating");
   const sig = sp.get("sig") ?? "";
 
   if (!Number.isInteger(mealId) || !date || !["accept", "choose", "decline"].includes(action)) {
@@ -100,7 +101,11 @@ export async function GET(req: NextRequest) {
   if (action === "decline" && !reason) {
     return htmlPage("<p>That link looks malformed.</p>");
   }
-  if (!verifyFeedbackLink({ mealId, date, action, reason }, sig)) {
+  const rating = rawRating !== null && /^[1-5]$/.test(rawRating) ? Number(rawRating) : null;
+  if (rawRating !== null && rating === null) {
+    return htmlPage("<p>That link looks malformed.</p>");
+  }
+  if (!verifyFeedbackLink({ mealId, date, action, reason, rating }, sig)) {
     return htmlPage("<p>That link isn't valid.</p>");
   }
 
@@ -167,12 +172,17 @@ export async function GET(req: NextRequest) {
   if (action === "accept") {
     await db
       .update(mealHistory)
-      .set({ accepted: true, respondedAt: new Date() })
+      .set({ accepted: true, rating, respondedAt: new Date() })
       .where(eq(mealHistory.id, row.id));
     if (offerGroup) await resolveOffer(offerGroup, mealId);
     // The one point at which the app knows real food was bought and cooked.
     await recordMealCooked(mealId);
-    return htmlPage(`<h1>Enjoy.</h1><p>Noted. Glad it landed.</p>`);
+    const note =
+      rating === null ? "Noted."
+      : rating >= 4 ? "Noted, one to repeat."
+      : rating <= 2 ? "Noted. It'll come round less often."
+      : "Noted.";
+    return htmlPage(`<h1>Enjoy.</h1><p>${note}</p>`);
   }
 
   // --- declined, with a reason --------------------------------------------
@@ -182,14 +192,20 @@ export async function GET(req: NextRequest) {
     .where(eq(mealHistory.id, row.id));
   if (offerGroup) await resolveOfferAsDeclined(offerGroup);
 
-  // "Not home" isn't a verdict on the food, so there's nothing to replace it
-  // with — suggesting another dinner to someone who's out is just noise.
-  if (reason === "not_home") {
+  // Some declines settle dinner rather than reject the dish. Suggesting an
+  // alternative to someone who is out, or who is about to eat yesterday's
+  // chilli, is noise — and neither says anything about the meal, so neither
+  // becomes a training label.
+  if (!wantsReplacement(reason!)) {
+    if (reason === "have_leftovers") {
+      await db.update(mealHistory).set({ ateLeftovers: true }).where(eq(mealHistory.id, row.id));
+    }
+    const mealName =
+      (await db.query.meals.findFirst({ where: eq(meals.id, mealId) }))?.name ?? "the meal";
     return htmlPage(
-      `<h1>Have a good evening.</h1>
-       <p>Nothing else suggested tonight. This won't be counted as disliking ${esc(
-         (await db.query.meals.findFirst({ where: eq(meals.id, mealId) }))?.name ?? "the meal"
-       )}.</p>`
+      reason === "have_leftovers"
+        ? `<h1>Leftovers it is.</h1><p>Nothing else suggested tonight, and this won't count against ${esc(mealName)}.</p>`
+        : `<h1>Have a good evening.</h1><p>Nothing else suggested tonight, and this won't count against ${esc(mealName)}.</p>`
     );
   }
 

@@ -149,6 +149,15 @@ export const mealHistory = pgTable(
      * entirely; see buildTrainingSet in src/lib/ml/model.ts.
      */
     declineReason: varchar("decline_reason", { length: 30 }),
+    /**
+     * 1-5 how much the meal was actually enjoyed, set when accepted. A bare
+     * "yes" conflates "that was excellent" with "it was fine, I was hungry",
+     * and the difference is exactly what the model should be learning. 3 is
+     * treated as no signal rather than as a weak yes.
+     */
+    rating: integer("rating"),
+    /** True when the evening was covered by leftovers rather than cooking. */
+    ateLeftovers: boolean("ate_leftovers").notNull().default(false),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
     /** Set once the reminder for this date has gone out, so hourly polling can't re-send. */
     emailedAt: timestamp("emailed_at", { withTimezone: true }),

@@ -41,6 +41,13 @@ function dishLine(d: DishFeatures): string {
 const META = 'style="color:#6b7280;font-size:14px"';
 
 /**
+ * A bare "yes" conflates "that was excellent" with "it was fine, I was
+ * hungry", and the difference is the whole thing the model should learn.
+ * Five buttons cost no more taps than one at the point of use.
+ */
+const RATING_LABELS = ["1 poor", "2", "3 ok", "4", "5 great"];
+
+/**
  * The daily "cook this tonight" email — the whole product, deliberately.
  * Planning a week ahead was tried and dropped: deciding tonight's dinner
  * days in advance removes the point of a daily nudge when the shop is five
@@ -111,7 +118,6 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
   const instructionsHtml = `<ol>${meal.instructions.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
 
   const date = result.planDate;
-  const yesLink = buildFeedbackLink(appUrl, { mealId: meal.id, date, action: "accept" });
 
   const btn = (href: string, label: string, secondary = false) =>
     `<a href="${href}" style="display:inline-block;background:${
@@ -170,11 +176,15 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
       <strong style="color:#111827">${portions} portion${portions === 2 ? "s" : ""}</strong>
       ${cost !== null ? `&middot; £${cost.toFixed(2)}` : ""}
       &middot; ${dishLine(dish)}
-      &middot; ${result.usedModel ? "model's pick" : "random pick"}
+      &middot; ${result.useItUpMode ? "use-it-up pick" : result.usedModel ? "model's pick" : "random pick"}
     </p>
-    ${notes.length ? `<p><em>${notes.map(esc).join(" ")}</em></p>` : ""}
+    ${result.explanation ? `<p style="font-size:15px">${esc(result.explanation)}</p>` : ""}
+    ${notes.length ? `<p ${META}><em>${notes.map(esc).join(" ")}</em></p>` : ""}
 
-    <p>${btn(yesLink, "Yes, cooking this")}</p>
+    <p style="margin-bottom:4px"><strong>Cooking it? Rate it after.</strong></p>
+    <p>${RATING_LABELS.map((label, i) =>
+      btn(buildFeedbackLink(appUrl, { mealId: meal.id, date, action: "accept", rating: i + 1 }), label, i + 1 < 4)
+    ).join("")}</p>
 
     <h2>Method</h2>
     ${instructionsHtml}

@@ -15,6 +15,8 @@ export interface FeedbackLinkParams {
   action: FeedbackAction;
   /** Only meaningful for `decline`. */
   reason?: DeclineReason | null;
+  /** 1-5, only meaningful for `accept`. */
+  rating?: number | null;
 }
 
 function secret(): string {
@@ -29,7 +31,7 @@ function secret(): string {
  * quietly rewrite a training label.
  */
 function canonicalString(p: FeedbackLinkParams): string {
-  return [p.mealId, p.date, p.action, p.reason ?? ""].join("|");
+  return [p.mealId, p.date, p.action, p.reason ?? "", p.rating ?? ""].join("|");
 }
 
 function sign(p: FeedbackLinkParams): string {
@@ -50,6 +52,7 @@ export function buildFeedbackLink(appUrl: string, p: FeedbackLinkParams): string
     sig: sign(p),
   });
   if (p.reason) params.set("reason", p.reason);
+  if (p.rating) params.set("rating", String(p.rating));
   return `${appUrl}/api/feedback/respond?${params.toString()}`;
 }
 

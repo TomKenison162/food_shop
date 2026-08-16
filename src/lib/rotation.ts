@@ -2,10 +2,13 @@ import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { approvedQueue, meals, mealHistory, mealIngredients, mealOffers, mlModel } from "./db/schema";
 import { addDaysToDateString, dayOfWeekForDateString, londonDateString } from "./date";
-import { pantryOverlapGrams } from "./pantry/pantry";
+import { expiringOverlapByMeal, pantryOverlapGrams } from "./pantry/pantry";
+import { explainPick } from "./explainPick";
+import { dishFeatures } from "./ml/dishFeatures";
 import { getCurrentWeather } from "./weather/weather";
 import { scoreMealsForTonight } from "./ml/model";
 import { getPortionsSetting } from "./settings";
+import { getPantrySummary } from "./pantry/pantry";
 import { spentInWeek } from "./budgetSpend";
 import { costForPortions, firstShopCostForPortions, WEEKLY_BUDGET_GBP } from "./budget";
 import { decideTonightsDinner, REPEAT_WINDOW_DAYS, type MealRecord } from "./rotationDecision";
@@ -18,6 +21,10 @@ export type PlannedMeal = typeof mealHistory.$inferSelect;
 
 export interface RotationResult {
   meal: MealRecord;
+  /** One-line plain-English reason for the pick, shown in the email. */
+  explanation: string;
+  /** True when selection was overridden to clear expiring stock. */
+  useItUpMode: boolean;
   /** Runners-up offered in the same email; clicking one is a preference label. */
   alternatives: MealRecord[];
   /** Ties this email's options together so preference pairs stay within one offer. */
@@ -54,9 +61,9 @@ export async function getPlannedMeal(date: string): Promise<PlannedMeal | undefi
  */
 export async function planMealForDate(
   date: string,
-  opts: { excludeMealIds?: number[]; now?: Date } = {}
+  opts: { excludeMealIds?: number[]; now?: Date; useItUp?: boolean } = {}
 ): Promise<RotationResult | null> {
-  const { excludeMealIds = [], now = new Date() } = opts;
+  const { excludeMealIds = [], now = new Date(), useItUp = false } = opts;
   const portions = await getPortionsSetting();
 
   const existing = await getPlannedMeal(date);
@@ -67,6 +74,8 @@ export async function planMealForDate(
       const prior = await latestOfferForDate(date);
       return {
         meal,
+        explanation: "",
+        useItUpMode: false,
         alternatives: prior.alternatives,
         offerGroup: prior.offerGroup,
         planDate: date,
@@ -119,6 +128,7 @@ export async function planMealForDate(
 
   const yesterday = await getPlannedMeal(addDaysToDateString(date, -1));
   const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(date);
+  const expiring = await expiringOverlapByMeal(date);
 
   const scoreList = await scoreMealsForTonight(approvedMeals, context);
   const scores = scoreList ? new Map(approvedMeals.map((m, i) => [m.id, scoreList[i]])) : null;
@@ -131,6 +141,8 @@ export async function planMealForDate(
     spentThisWeek,
     weeklyBudget: WEEKLY_BUDGET_GBP,
     scores,
+    expiringOverlap: new Map([...expiring].map(([id, v]) => [id, v.grams])),
+    useItUp,
   });
   if (!decision) return null;
 
@@ -204,8 +216,38 @@ export async function planMealForDate(
     now,
   });
 
+  const pantryNames = (await getPantrySummary()).map((p) => p.genericName);
+  const chosenIngredients = await db
+    .select({ genericName: mealIngredients.genericName })
+    .from(mealIngredients)
+    .where(eq(mealIngredients.mealId, chosen.id));
+  const chosenNames = chosenIngredients.map((i) => i.genericName);
+
+  const explanation = explainPick({
+    mealName: chosen.name,
+    protein: chosen.primaryProtein,
+    dish: dishFeatures(chosen.instructions, chosenNames),
+    temperatureC: context.apparentTemperatureC ?? context.temperatureC,
+    precipitationMm: context.precipitationMm ?? null,
+    isWeekend: context.isWeekend,
+    dayName: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][context.dayOfWeek],
+    daysSinceLastServed: lastServed,
+    proteinDaysSinceLastServed: proteinLastServed,
+    expiringUsed: expiring.get(chosen.id)?.names ?? [],
+    pantryUsed: chosenNames.filter((n) => pantryNames.includes(n)),
+    usedModel: decision.usedModel,
+    scoreRank: decision.diagnostics.chosenScoreRank,
+    poolSize: decision.diagnostics.finalPoolIds.length,
+    relaxedProteinRule: decision.relaxedProteinRule,
+    relaxedRepeatRule: decision.relaxedRepeatRule,
+    relaxedBudgetRule: decision.relaxedBudgetRule,
+    useItUpMode: decision.useItUpMode,
+  });
+
   return {
     meal: chosen,
+    explanation,
+    useItUpMode: decision.useItUpMode,
     alternatives: decision.alternatives,
     offerGroup,
     planDate: date,
@@ -285,6 +327,8 @@ export async function setPlanForDate(date: string, mealId: number): Promise<Rota
 
   return {
     meal,
+    explanation: "You picked this one.",
+    useItUpMode: false,
     alternatives: prior.alternatives.filter((m) => m.id !== meal.id),
     offerGroup: prior.offerGroup,
     planDate: date,
@@ -442,8 +486,11 @@ export async function offerGroupFor(date: string, mealId: number): Promise<strin
 }
 
 /** Today's dinner (Europe/London). */
-export function selectTonightsDinner(now: Date = new Date()): Promise<RotationResult | null> {
-  return planMealForDate(londonDateString(now), { now });
+export function selectTonightsDinner(
+  opts: { now?: Date; useItUp?: boolean } = {}
+): Promise<RotationResult | null> {
+  const now = opts.now ?? new Date();
+  return planMealForDate(londonDateString(now), { now, useItUp: opts.useItUp });
 }
 
 /**

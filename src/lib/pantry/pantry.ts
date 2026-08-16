@@ -150,6 +150,48 @@ export async function getPantrySummary(today = londonDateString()): Promise<Pant
   }));
 }
 
+/** Stock is "expiring" once it's this close to its date. */
+export const EXPIRING_SOON_DAYS = 3;
+
+/**
+ * For each meal, the pantry stock it would use that is about to expire, and
+ * the names involved.
+ *
+ * One query for every meal rather than one per meal: this runs inside the
+ * daily job, which already has real work to do under a timeout.
+ */
+export async function expiringOverlapByMeal(
+  today = londonDateString()
+): Promise<Map<number, { grams: number; names: string[] }>> {
+  const cutoff = addDaysToDateString(today, EXPIRING_SOON_DAYS);
+  const stock = await db
+    .select()
+    .from(pantryItems)
+    .where(and(gt(pantryItems.gramsRemaining, "0"), notExpired(today)));
+
+  const soon = stock.filter((s) => s.expiresOn !== null && s.expiresOn <= cutoff);
+  const out = new Map<number, { grams: number; names: string[] }>();
+  if (soon.length === 0) return out;
+
+  const byName = new Map(soon.map((s) => [s.genericName, Number(s.gramsRemaining)]));
+  const lines = await db
+    .select({ mealId: mealIngredients.mealId, genericName: mealIngredients.genericName })
+    .from(mealIngredients)
+    .where(inArray(mealIngredients.genericName, [...byName.keys()]));
+
+  for (const line of lines) {
+    const grams = byName.get(line.genericName);
+    if (grams === undefined) continue;
+    const entry = out.get(line.mealId) ?? { grams: 0, names: [] };
+    if (!entry.names.includes(line.genericName)) {
+      entry.names.push(line.genericName);
+      entry.grams += grams;
+    }
+    out.set(line.mealId, entry);
+  }
+  return out;
+}
+
 /**
  * How many grams of unexpired pantry stock a candidate meal would use up,
  * matched by generic ingredient name. Used to bias meal selection toward

@@ -360,3 +360,41 @@ describe("decideTonightsDinner", () => {
     });
   });
 });
+
+describe("use-it-up mode", () => {
+  it("picks whatever clears the most expiring stock, ignoring the model", () => {
+    // Food going in the bin is a certain loss; the model's opinion is a
+    // probabilistic one, so the certain loss wins.
+    const result = decideTonightsDinner(
+      input({
+        approvedMeals: [meal({ id: 1 }), meal({ id: 2 }), meal({ id: 3 })],
+        scores: new Map([[1, 0.99], [2, 0.1], [3, 0.2]]),
+        expiringOverlap: new Map([[2, 400], [3, 100]]),
+        useItUp: true,
+      })
+    );
+    expect(result?.meal.id).toBe(2);
+    expect(result?.useItUpMode).toBe(true);
+    expect(result?.usedModel).toBe(false);
+  });
+
+  it("stays in normal mode when nothing is expiring", () => {
+    const result = decideTonightsDinner(
+      input({ approvedMeals: [meal({ id: 1 }), meal({ id: 2 })], useItUp: true, expiringOverlap: new Map() })
+    );
+    expect(result?.useItUpMode).toBe(false);
+  });
+
+  it("still respects the rules while clearing stock", () => {
+    // Use-it-up must not become a back door around protein rotation.
+    const result = decideTonightsDinner(
+      input({
+        approvedMeals: [meal({ id: 1, primaryProtein: "fish" }), meal({ id: 2, primaryProtein: "beef" })],
+        yesterdaysProtein: "beef",
+        expiringOverlap: new Map([[2, 900]]),
+        useItUp: true,
+      })
+    );
+    expect(result?.meal.id).toBe(1);
+  });
+});

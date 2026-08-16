@@ -19,6 +19,17 @@ export interface RotationInput {
   scores: Map<number, number> | null;
   /** How many runners-up to offer alongside the primary pick. Default 2. */
   alternativesWanted?: number;
+  /**
+   * mealId -> grams of pantry stock this meal would use that expires soon.
+   * Present regardless of mode, so the email can mention it either way.
+   */
+  expiringOverlap?: Map<number, number>;
+  /**
+   * When true, whatever clears the most expiring stock wins outright,
+   * overriding the model. Food going in the bin is a certain loss; the
+   * model's opinion is a probabilistic one, so the certain loss wins.
+   */
+  useItUp?: boolean;
   /** Injectable for deterministic tests. */
   random?: () => number;
 }
@@ -37,6 +48,8 @@ export interface RotationDecision {
   relaxedRepeatRule: boolean;
   relaxedBudgetRule: boolean;
   usedModel: boolean;
+  /** True when use-it-up overrode normal selection. */
+  useItUpMode: boolean;
   diagnostics: SelectionDiagnostics;
 }
 
@@ -51,6 +64,8 @@ export const DEFAULT_ALTERNATIVES = 2;
  */
 export interface SelectionDiagnostics {
   approvedCount: number;
+  useItUpMode: boolean;
+  expiringOverlap: { mealId: number; grams: number }[];
   excludedByRepeat: number[];
   excludedByProtein: number[];
   excludedByBudget: number[];
@@ -125,7 +140,26 @@ export function decideTonightsDinner(input: RotationInput): RotationDecision | n
   }
 
   const wanted = 1 + (input.alternativesWanted ?? DEFAULT_ALTERNATIVES);
-  const { meals: picked, usedModel } = sampleDistinct(pool, input.scores, random, wanted);
+
+  // Use-it-up: rank by expiring stock cleared, not by model score. Only
+  // engages when something in the pool would actually use something up,
+  // so switching it on during an empty pantry changes nothing.
+  const expiring = input.expiringOverlap ?? new Map<number, number>();
+  const clearsSomething = pool.some((m) => (expiring.get(m.id) ?? 0) > 0);
+  const useItUpMode = (input.useItUp ?? false) && clearsSomething;
+
+  let picked: MealRecord[];
+  let usedModel: boolean;
+  if (useItUpMode) {
+    picked = [...pool]
+      .sort((a, b) => (expiring.get(b.id) ?? 0) - (expiring.get(a.id) ?? 0))
+      .slice(0, wanted);
+    usedModel = false;
+  } else {
+    const sampled = sampleDistinct(pool, input.scores, random, wanted);
+    picked = sampled.meals;
+    usedModel = sampled.usedModel;
+  }
   const chosen = picked[0];
 
   const inPool = new Set(pool.map((m) => m.id));
@@ -153,8 +187,11 @@ export function decideTonightsDinner(input: RotationInput): RotationDecision | n
     relaxedRepeatRule,
     relaxedBudgetRule,
     usedModel,
+    useItUpMode,
     diagnostics: {
       approvedCount: approvedMeals.length,
+      useItUpMode,
+      expiringOverlap: [...expiring.entries()].map(([mealId, grams]) => ({ mealId, grams })),
       excludedByRepeat: approvedMeals.filter((m) => !notOverExposed.includes(m)).map((m) => m.id),
       excludedByProtein: base.filter((m) => !pool.includes(m) && yesterdaysProtein !== null && m.primaryProtein === yesterdaysProtein).map((m) => m.id),
       excludedByBudget: base.filter((m) => !inPool.has(m.id) && !(yesterdaysProtein !== null && m.primaryProtein === yesterdaysProtein)).map((m) => m.id),
