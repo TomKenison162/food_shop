@@ -2,11 +2,7 @@ import { and, eq, gte, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { approvedQueue, meals, mealHistory, mealIngredients } from "./db/schema";
 import { addDaysToDateString, dayOfWeekForDateString, londonDateString } from "./date";
-import {
-  consumePantryForMeal,
-  pantryOverlapGrams,
-  recordPurchaseLeftoversForMeal,
-} from "./pantry/pantry";
+import { pantryOverlapGrams } from "./pantry/pantry";
 import { getCurrentTemperatureC } from "./weather/weather";
 import { scoreMealsForTonight } from "./ml/model";
 import { getPortionsSetting } from "./settings";
@@ -152,8 +148,10 @@ export async function planMealForDate(
     ingredientsCount: ingredientCount,
   });
 
-  await recordPurchaseLeftoversForMeal(chosen.id);
-  await consumePantryForMeal(chosen.id);
+  // No pantry side effects here on purpose. Planning a meal only *proposes*
+  // it — the pantry must not move until a "Yes" reply confirms it was
+  // actually bought and cooked (see recordMealCooked). The snapshot above is
+  // still taken pre-cook, which is exactly the state the suggestion was made in.
 
   return {
     meal: chosen,

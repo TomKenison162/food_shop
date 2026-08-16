@@ -32,26 +32,73 @@ jobs:
             exit 1
           fi
 
-          # Deliberately NOT `curl -f`: -f ignores 3xx, so a redirect (e.g.
-          # Vercel Deployment Protection bouncing us to its SSO login) exited
-          # 0 and this job reported success while the endpoint never ran.
-          # Capture the status instead and treat anything outside 2xx as a
-          # failure, printing the body so the cause is visible in the log.
+          # A trailing slash produces host//api/... which Vercel answers with
+          # a 308 canonicalisation redirect, so normalise it away first.
+          APP_URL="${APP_URL%/}"
+
           url="${APP_URL}/api/cron/daily-reminder"
           if [ "${FORCE:-false}" = "true" ]; then
             url="${url}?force=1"
             echo "Forcing a send, ignoring the 17:00 Europe/London window."
           fi
 
-          status=$(curl -sS -o response.txt -w '%{http_code}' \
-            --max-time 60 \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            "$url")
+          # Printed unconditionally so a failed run can never again be a
+          # blank log. If this line is missing from the output, the step died
+          # before it ran — which now only happens if GitHub is still using
+          # an older version of this file than the one on the default branch.
+          echo "Target: ${url}"
+
+          # Deliberately NOT `curl -f`: -f ignores 3xx, so a redirect exited 0
+          # and this job reported success while the endpoint never ran.
+          #
+          # Redirects ARE followed (-L), because harmless ones are normal here
+          # (http->https, host canonicalisation). What matters is where we end
+          # up: landing on an SSO or login page means the request was
+          # intercepted, which is checked explicitly below. --max-redirs caps
+          # any loop.
+          # Captured with command substitution, NOT `read a b < <(curl ...)`.
+          # curl's -w output has no trailing newline, so read hit EOF and
+          # returned 1 — which under `set -e` killed the step before the
+          # first echo. The job failed hourly with no output at all while the
+          # endpoint itself was being called successfully every time.
+          if ! out="$(
+            curl -sS -L --max-redirs 5 -o response.txt \
+              -w '%{http_code} %{url_effective}' \
+              --max-time 60 \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "$url"
+          )"; then
+            echo "::error::curl could not reach ${url} (network error or timeout)."
+            exit 1
+          fi
+
+          status="${out%% *}"
+          effective_url="${out##* }"
 
           echo "HTTP ${status}"
+          echo "final URL: ${effective_url}"
           echo "--- response body ---"
           cat response.txt || true
           echo
+
+          # curl drops the Authorization header on a cross-HOST redirect (a
+          # deliberate curl safety behaviour), which would surface as a
+          # confusing 401 rather than the real cause. Catch it explicitly.
+          original_host="$(printf '%s' "$url" | awk -F/ '{print $3}')"
+          final_host="$(printf '%s' "$effective_url" | awk -F/ '{print $3}')"
+          if [ "$original_host" != "$final_host" ]; then
+            echo "::error::Redirected from ${original_host} to ${final_host}, which drops the auth header. \
+          Set the APP_URL secret to https://${final_host} (the canonical production domain)."
+            exit 1
+          fi
+
+          case "$effective_url" in
+            *sso*|*/login*)
+              echo "::error::Request was intercepted and ended at ${effective_url} — it never reached the app. \
+          Disable Vercel Deployment Protection (Settings > Deployment Protection > Vercel Authentication)."
+              exit 1
+              ;;
+          esac
 
           case "$status" in
             2*)

@@ -13,12 +13,17 @@ function notExpired(today: string) {
 }
 
 /**
- * Records leftover stock for a meal actually served tonight — e.g. a
- * recipe needs 400g chicken thighs but the matched pack was 500g: 100g
- * leftover. Reads gramsPurchased/gramsNeeded persisted on mealIngredients
- * at pricing time. Called from rotation.ts only when a meal is genuinely
- * selected for a real day — deliberately NOT called from the pricing step
- * itself, since pricing the whole approved queue isn't real shopping trips.
+ * Records leftover stock for a meal actually cooked — e.g. a recipe needs
+ * 400g chicken thighs but the matched pack was 500g: 100g leftover. Reads
+ * gramsPurchased/gramsNeeded persisted on mealIngredients at pricing time.
+ *
+ * Only ever reached via recordMealCooked, i.e. after a "Yes" reply. It is
+ * deliberately NOT called when a meal is merely *suggested*: an earlier
+ * version ran this at plan time, so every declined and superseded suggestion
+ * stocked the pantry too. Since nearly every dish lists salt, pepper, oil and
+ * garlic, those entries were topped up (and their expiry reset) on each
+ * suggestion — one real pantry had accumulated ~1.5kg of "salt and pepper"
+ * from packs that were never bought.
  *
  * Each entry gets an expiry from its ingredient's shelf life, and topping up
  * an existing entry resets the clock (you just opened a fresh pack).
@@ -62,11 +67,11 @@ export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<vo
 }
 
 /**
- * Deducts pantry stock consumed by a meal actually served tonight, so
- * leftovers run down as they get used up rather than being counted forever.
- * Deducts the amount the recipe actually calls for (from the stored
- * gramsNeeded, else parsed from the quantity string) — a flat per-item
- * guess would drain a jar of spices as fast as a pack of chicken.
+ * Deducts pantry stock consumed by a meal actually cooked, so leftovers run
+ * down as they get used up rather than being counted forever. Deducts the
+ * amount the recipe actually calls for (from the stored gramsNeeded, else
+ * parsed from the quantity string) — a flat per-item guess would drain a jar
+ * of spices as fast as a pack of chicken.
  */
 export async function consumePantryForMeal(mealId: number): Promise<void> {
   const ingredients = await db.query.mealIngredients.findMany({
@@ -90,6 +95,22 @@ export async function consumePantryForMeal(mealId: number): Promise<void> {
       .set({ gramsRemaining: String(remaining), updatedAt: new Date() })
       .where(eq(pantryItems.id, existing.id));
   }
+}
+
+/**
+ * The pantry effect of actually cooking a meal: the packs you had to buy
+ * leave leftovers, and the meal eats into whatever stock you already had.
+ *
+ * Called from the "Yes" reply only. Confirming you cooked something is the
+ * one moment the app knows real food changed hands — a suggestion you never
+ * answered, or declined, tells us nothing was bought.
+ *
+ * Order matters: leftovers are banked before consumption, so a meal that
+ * both opens a new pack and draws on existing stock nets out correctly.
+ */
+export async function recordMealCooked(mealId: number): Promise<void> {
+  await recordPurchaseLeftoversForMeal(mealId);
+  await consumePantryForMeal(mealId);
 }
 
 /** Clears out expired and empty entries. Safe to call often. */

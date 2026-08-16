@@ -18,6 +18,7 @@
     "db:export": "tsx scripts/export-data.ts",
     "db:import": "tsx scripts/import-data.ts",
     "db:recompute": "tsx scripts/recompute-costs.ts",
+    "db:reset-pantry": "tsx scripts/reset-pantry.ts",
     "db:local-server": "pglite-server --db=./.pglite-data --port=5433",
     "cron:local": "tsx scripts/local-cron.ts",
     "pipeline:price": "tsx scripts/run-price-approved.ts"

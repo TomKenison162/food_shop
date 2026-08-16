@@ -8,6 +8,7 @@ import { sendDinnerReminder, sendFailureAlert } from "@/lib/email/sendReminder";
 import { londonDateString, londonHour } from "@/lib/date";
 import { isPaused } from "@/lib/settings";
 import { purgeStalePantryItems } from "@/lib/pantry/pantry";
+import { trainModel } from "@/lib/ml/model";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -56,6 +57,21 @@ export async function GET(req: NextRequest) {
     // Expired leftovers would otherwise show up as "you already have this".
     await purgeStalePantryItems(today);
 
+    // Retrain before choosing, so tonight's pick uses every reply so far.
+    // This lives here rather than in the feedback route because
+    // leave-one-out CV fits one model per labelled example and easily
+    // outruns a request someone is waiting on. A training failure must not
+    // cost you dinner, so it's swallowed — selection falls back to the rules.
+    let training: string | undefined;
+    try {
+      const t = await trainModel();
+      training = t.trained
+        ? `Retrained on ${t.sampleCount} replies (${((t.accuracy ?? 0) * 100).toFixed(0)}% vs ${((t.baselineAccuracy ?? 0) * 100).toFixed(0)}% baseline).`
+        : t.reason;
+    } catch (err) {
+      training = `Training failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+
     const existing = await getPlannedMeal(today);
     if (!force && existing?.emailedAt) {
       return NextResponse.json({ skipped: true, reason: "Already emailed today." });
@@ -63,7 +79,7 @@ export async function GET(req: NextRequest) {
 
     const result = await selectTonightsDinner();
     if (!result) {
-      return NextResponse.json({ sent: false, reason: "Approved queue is empty." });
+      return NextResponse.json({ sent: false, reason: "Approved queue is empty.", training });
     }
 
     const emailResult = await sendDinnerReminder(result);
@@ -77,7 +93,7 @@ export async function GET(req: NextRequest) {
       .set({ emailedAt: new Date() })
       .where(eq(mealHistory.id, (await getPlannedMeal(today))!.id));
 
-    return NextResponse.json({ meal: result.meal.name, ...emailResult });
+    return NextResponse.json({ meal: result.meal.name, ...emailResult, training });
   } catch (err) {
     const message = err instanceof Error ? err.stack ?? err.message : String(err);
     await sendFailureAlert(message);

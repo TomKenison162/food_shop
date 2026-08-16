@@ -104,7 +104,7 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
       <a href="${yesLink}" style="background:#111827;color:#fff;padding:10px 20px;text-decoration:none;border-radius:999px;margin-right:8px;">Yes, cooking this</a>
       <a href="${noLink}" style="background:#e5e7eb;color:#111827;padding:10px 20px;text-decoration:none;border-radius:999px;">No — suggest another</a>
     </p>
-    <p style="color:#6b7280;font-size:13px">Tapping "No" picks you a different dinner straight away.</p>
+    <p style="color:#6b7280;font-size:13px">Tapping "No" emails you a different dinner straight away.</p>
 
     <h2>Method</h2>
     ${instructionsHtml}
