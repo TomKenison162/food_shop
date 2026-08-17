@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import type { RotationResult } from "../rotation";
 import { buildFeedbackLink } from "../feedbackLink";
+import { buildPantryMissingLink } from "../pantryLink";
 import { DECLINE_LABELS, DECLINE_REASONS } from "../declineReasons";
 import { getPantrySummary } from "../pantry/pantry";
 import { costForPortions, WEEKLY_BUDGET_GBP } from "../budget";
@@ -122,13 +123,19 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
     ? `<ul>${toBuy.map(line).join("")}</ul>`
     : "<p>Nothing to buy. Your pantry covers it.</p>";
 
+  /**
+   * Pantry stock is inferred, not counted, so each line carries a one-tap
+   * correction. An over-stated pantry is the expensive kind of wrong: the
+   * shopping list leaves the item out and you get home unable to cook.
+   */
   const coveredHtml = covered.length
     ? `<h2>Already in</h2><ul>${covered
         .map((i) => {
           const p = pantryByName.get(i.genericName)!;
+          const missing = buildPantryMissingLink(appUrl, result.planDate, i.genericName);
           return `<li>${esc(i.genericName)}, ~${p.gramsRemaining}g on hand${
             p.daysLeft !== null && p.daysLeft <= 2 ? " <strong>(use it up)</strong>" : ""
-          }</li>`;
+          } <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
         })
         .join("")}</ul>`
     : "";

@@ -11,6 +11,8 @@ import { SESSION_COOKIE, deriveSessionToken, tokensMatch } from "@/lib/auth/sess
  *  - /api/cron/*        — authenticated by the CRON_SECRET bearer token
  *  - /api/feedback/respond — clicked from the daily email, authenticated by
  *                            the HMAC signature in the URL
+ *  - /api/pantry/missing   — same, for the "not got it" links beside each
+ *                            pantry-covered ingredient
  *
  * Missing APP_PASSWORD is handled differently per environment, on purpose:
  * locally the gate opens (no setup needed to run `npm run dev`), but in
@@ -18,7 +20,13 @@ import { SESSION_COOKIE, deriveSessionToken, tokensMatch } from "@/lib/auth/sess
  * would otherwise silently publish an app where anyone could delete meals
  * or run up real pricing-API charges — a much worse outcome than downtime.
  */
-const EXEMPT_PREFIXES = ["/api/cron/", "/api/feedback/respond", "/login", "/api/login"];
+const EXEMPT_PREFIXES = [
+  "/api/cron/",
+  "/api/feedback/respond",
+  "/api/pantry/missing",
+  "/login",
+  "/api/login",
+];
 
 export async function middleware(req: NextRequest) {
   const password = process.env.APP_PASSWORD;
