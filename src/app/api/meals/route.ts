@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUserParam } from "@/lib/userParam";
 import { and, eq, isNull, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { meals, approvedQueue } from "@/lib/db/schema";
+import { meals, approvedQueue, mealRejections } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -15,9 +16,17 @@ export const dynamic = "force-dynamic";
  * property of the meal, not of the chosen portion size.
  */
 export async function GET(req: NextRequest) {
+  const userId = requireUserParam(req);
+  // Exclusions are this user's own: the catalogue is shared, so another
+  // person's left-swipe must not shrink this deck.
+  const rejected = await db
+    .select({ mealId: mealRejections.mealId })
+    .from(mealRejections)
+    .where(eq(mealRejections.userId, userId));
+  const rejectedIds = rejected.map((r) => r.mealId);
   const tier = req.nextUrl.searchParams.get("tier"); // "budget" | "standard" | "gourmet" | null
 
-  const approvedIds = (await db.select({ id: approvedQueue.mealId }).from(approvedQueue)).map(
+  const approvedIds = (await db.select({ id: approvedQueue.mealId }).from(approvedQueue).where(eq(approvedQueue.userId, userId))).map(
     (r) => r.id
   );
 

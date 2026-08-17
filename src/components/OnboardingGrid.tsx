@@ -1,5 +1,7 @@
 "use client";
 
+import { withUser } from "@/lib/useUserId";
+
 import { useEffect, useState } from "react";
 import { Meal } from "@/lib/types";
 
@@ -13,7 +15,7 @@ export default function OnboardingGrid({ onDone }: Props) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch("/api/classics")
+    fetch(withUser("/api/classics"))
       .then((r) => r.json())
       .then((data) => setClassics(data.meals));
   }, []);
@@ -30,7 +32,7 @@ export default function OnboardingGrid({ onDone }: Props) {
   async function handleContinue() {
     setSubmitting(true);
     await Promise.all(
-      [...selected].map((id) => fetch(`/api/meals/${id}/approve`, { method: "POST" }))
+      [...selected].map((id) => fetch(withUser(`/api/meals/${id}/approve`), { method: "POST" }))
     );
     setSubmitting(false);
     onDone();

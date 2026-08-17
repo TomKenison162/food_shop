@@ -1,5 +1,7 @@
 "use client";
 
+import { withUser } from "@/lib/useUserId";
+
 import { useEffect, useState } from "react";
 import { Meal, Tier } from "@/lib/types";
 import ToggleBar from "./ToggleBar";
@@ -19,13 +21,13 @@ export default function AppShell() {
   } | null>(null);
 
   useEffect(() => {
-    fetch("/api/queue")
+    fetch(withUser("/api/queue"))
       .then((r) => r.json())
       .then((data) => {
         setNeedsOnboarding((data.queue?.length ?? 0) === 0);
         setOnboardingChecked(true);
       });
-    fetch("/api/settings")
+    fetch(withUser("/api/settings"))
       .then((r) => r.json())
       .then((data) => {
         if (data.portions === 1 || data.portions === 2) setPortions(data.portions);
@@ -34,7 +36,7 @@ export default function AppShell() {
 
   function handlePortionsChange(p: 1 | 2) {
     setPortions(p);
-    fetch("/api/settings", {
+    fetch(withUser("/api/settings"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ portions: p }),
@@ -49,7 +51,7 @@ export default function AppShell() {
 
   function loadDeck() {
     const qs = tier === "all" ? "" : `?tier=${tier}`;
-    fetch(`/api/meals${qs}`)
+    fetch(withUser(`/api/meals${qs}`))
       .then((r) => r.json())
       .then((data) => setDeck(data.meals ?? []));
   }
@@ -57,7 +59,7 @@ export default function AppShell() {
   async function handleDecision(meal: Meal, direction: "approve" | "reject") {
     setDeck((prev) => prev.filter((m) => m.id !== meal.id));
     setLastDecision({ meal, direction });
-    await fetch(`/api/meals/${meal.id}/${direction}`, { method: "POST" });
+    await fetch(withUser(`/api/meals/${meal.id}/${direction}`), { method: "POST" });
   }
 
   /** Reverses the most recent swipe — a misswipe shouldn't be permanent. */
@@ -65,7 +67,7 @@ export default function AppShell() {
     if (!lastDecision) return;
     const { meal, direction } = lastDecision;
     setLastDecision(null);
-    await fetch(`/api/meals/${meal.id}/${direction === "reject" ? "restore" : "unapprove"}`, {
+    await fetch(withUser(`/api/meals/${meal.id}/${direction === "reject" ? "restore" : "unapprove"}`), {
       method: "POST",
     });
     setDeck((prev) => [meal, ...prev]);

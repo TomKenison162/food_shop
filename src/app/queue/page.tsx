@@ -1,5 +1,7 @@
 "use client";
 
+import { withUser } from "@/lib/useUserId";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Meal } from "@/lib/types";
@@ -19,7 +21,7 @@ export default function QueuePage() {
   }, []);
 
   function loadQueue() {
-    fetch("/api/queue")
+    fetch(withUser("/api/queue"))
       .then((r) => r.json())
       .then((data) => setQueue(data.queue ?? []));
   }
@@ -54,7 +56,7 @@ export default function QueuePage() {
   /** Puts a meal back into the swipe deck without deleting it. */
   async function handleUnapprove(meal: Meal) {
     setQueue((prev) => prev.filter((row) => row.meal.id !== meal.id));
-    await fetch(`/api/meals/${meal.id}/unapprove`, { method: "POST" });
+    await fetch(withUser(`/api/meals/${meal.id}/unapprove`), { method: "POST" });
   }
 
   return (

@@ -125,6 +125,30 @@ const userIdColumn = () =>
     .notNull()
     .references(() => users.id, { onDelete: "cascade" });
 
+/**
+ * Meals a user has swiped left on.
+ *
+ * Per-user rather than a flag on `meals`, because the catalogue is shared:
+ * a global soft-delete would mean one household member rejecting a dish
+ * removed it from everyone else's rotation too. `meals.deletedAt` remains,
+ * but now means "retired from the catalogue entirely" rather than
+ * "somebody didn't fancy it".
+ */
+export const mealRejections = pgTable(
+  "meal_rejections",
+  {
+    id: serial("id").primaryKey(),
+    userId: userIdColumn(),
+    mealId: integer("meal_id")
+      .notNull()
+      .references(() => meals.id, { onDelete: "cascade" }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userMealIdx: uniqueIndex("meal_rejections_user_meal_idx").on(t.userId, t.mealId),
+  })
+);
+
 /** A user's swiped-right queue. */
 export const approvedQueue = pgTable("approved_queue", {
   id: serial("id").primaryKey(),

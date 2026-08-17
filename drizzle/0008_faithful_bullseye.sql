@@ -82,3 +82,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS "pantry_user_ingredient_idx" ON "pantry_items"
 
 CREATE INDEX IF NOT EXISTS "meal_history_user_date_idx" ON "meal_history" USING btree ("user_id","served_date");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "meal_offers_user_date_idx" ON "meal_offers" USING btree ("user_id","served_date");
+
+--> statement-breakpoint
+
+-- Rejections become per-user. A global soft-delete on the shared catalogue
+-- would let one person's left-swipe remove a dish from everyone's rotation.
+CREATE TABLE IF NOT EXISTS "meal_rejections" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"user_id" integer NOT NULL,
+	"meal_id" integer NOT NULL,
+	"rejected_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "meal_rejections" ADD CONSTRAINT "meal_rejections_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "meal_rejections" ADD CONSTRAINT "meal_rejections_meal_id_meals_id_fk" FOREIGN KEY ("meal_id") REFERENCES "public"."meals"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "meal_rejections_user_meal_idx" ON "meal_rejections" USING btree ("user_id","meal_id");
+--> statement-breakpoint
+
+-- Existing global rejections become user 1's, since that is whose swipes
+-- they actually were.
+INSERT INTO "meal_rejections" ("user_id", "meal_id")
+SELECT 1, "id" FROM "meals" WHERE "deleted_at" IS NOT NULL
+ON CONFLICT DO NOTHING;
