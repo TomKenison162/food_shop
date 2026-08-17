@@ -48,6 +48,24 @@ const META = 'style="color:#6b7280;font-size:14px"';
 const RATING_LABELS = ["1 poor", "2", "3 ok", "4", "5 great"];
 
 /**
+ * London wall-clock send time, stated explicitly in the email.
+ *
+ * Mail clients and server logs happily show UTC, and in summer 16:00 UTC is
+ * 17:00 BST, which reads like the reminder went out an hour early. Saying
+ * the London time outright settles it without anyone having to work out
+ * whether the clocks have changed.
+ */
+function sentAtLondon(date = new Date()): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  }).format(date);
+}
+
+/**
  * The daily "cook this tonight" email — the whole product, deliberately.
  * Planning a week ahead was tried and dropped: deciding tonight's dinner
  * days in advance removes the point of a daily nudge when the shop is five
@@ -195,6 +213,10 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
 
     ${alternativesHtml}
     ${declineHtml}
+
+    <p ${META} style="border-top:1px solid #e5e7eb;padding-top:10px;margin-top:24px">
+      Sent ${sentAtLondon()} London time.
+    </p>
 
     <h2>This week</h2>
     <p ${META}>
