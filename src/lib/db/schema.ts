@@ -102,6 +102,14 @@ export const users = pgTable("users", {
   name: varchar("name", { length: 100 }).notNull(),
   /** Where this person's reminder is sent. */
   email: varchar("email", { length: 200 }).notNull().unique(),
+  /**
+   * Where mail is actually delivered, when that differs from who the user
+   * is. Needed because an unverified Resend account will only deliver to
+   * the account owner's address, so a second person's reminders have to be
+   * routed through that inbox and forwarded on. Identity stays unique and
+   * truthful; delivery is allowed to be shared. Null means "send to email".
+   */
+  deliveryEmail: varchar("delivery_email", { length: 200 }),
   portions: integer("portions").notNull().default(2),
   /**
    * Inclusive YYYY-MM-DD through which reminders are suspended (holidays).

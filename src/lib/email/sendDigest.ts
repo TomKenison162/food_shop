@@ -39,7 +39,7 @@ export async function sendWeeklyDigest(
 ): Promise<SendDigestResult> {
   const user = await getUser(userId);
   if (!user) return { sent: false, reason: `No such user: ${userId}` };
-  const m = mailer(user.email);
+  const m = mailer(user.deliveryEmail ?? user.email);
   if (!m) return { sent: false, reason: "Email env vars not fully configured." };
 
   const weekStart = addDaysToDateString(today, -6);
