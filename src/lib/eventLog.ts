@@ -99,8 +99,21 @@ export async function logPlanEvent(input: PlanEventInput): Promise<void> {
       byMeal.set(row.mealId, list);
     }
 
+    const offeredIds = new Set([input.chosen.id, ...input.alternatives.map((a) => a.id)]);
+
+    /**
+     * Raw recipe text is kept only for the meals actually shown.
+     *
+     * Everything derived from that text (durations, cuisines, methods,
+     * allergens, effort, richness) is kept for every candidate, so nothing
+     * analysable is lost. Carrying the prose for all 77 as well pushed the
+     * row past 100KB, and writing it is what made a decline exceed the 60
+     * second function limit. The recipes are in the `meals` table anyway,
+     * joinable by the id recorded here.
+     */
     const describe = (m: MealRecord) => {
       const names = byMeal.get(m.id) ?? [];
+      const offered = offeredIds.has(m.id);
       return {
         id: m.id,
         name: m.name,
@@ -111,15 +124,13 @@ export async function logPlanEvent(input: PlanEventInput): Promise<void> {
         isClassic: m.isClassic,
         instructionCount: m.instructions.length,
         ingredientCount: names.length,
-        ingredients: names,
         dish: dishFeatures(m.instructions, names),
         recipe: recipeFacts(m.instructions, m.description, names),
-        instructions: m.instructions,
-        description: m.description,
         score: input.scores?.get(m.id) ?? null,
         selectionProbability: input.diagnostics.weights.find((w) => w.mealId === m.id)?.probability ?? null,
         wasChosen: m.id === input.chosen.id,
-        wasOffered: m.id === input.chosen.id || input.alternatives.some((a) => a.id === m.id),
+        wasOffered: offered,
+        ...(offered ? { ingredients: names, instructions: m.instructions, description: m.description } : {}),
       };
     };
 

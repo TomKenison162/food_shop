@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { approvedQueue, meals, mealHistory, mealIngredients, mealOffers, mlModel } from "./db/schema";
+import { approvedQueue, meals, mealHistory, mealIngredients, mealOffers, mlModel, pantryItems } from "./db/schema";
 import { addDaysToDateString, dayOfWeekForDateString, londonDateString } from "./date";
 import { expiringOverlapByMeal, pantryOverlapGrams } from "./pantry/pantry";
 import { explainPick } from "./explainPick";
@@ -153,12 +153,16 @@ export async function planMealForDate(
   // Snapshot feature values as they are right now — weather can't be
   // re-fetched for a past date, and pantry/recency drift, so a training
   // example has to record the world as it was when the call was made.
-  const [overlap, ingredientCount, lastServed, proteinLastServed] = await Promise.all([
-    pantryOverlapGrams(chosen.id),
-    countIngredients(chosen.id),
-    daysSinceLastServed(chosen.id, date),
-    proteinDaysSinceLastServed(chosen.primaryProtein, date),
-  ]);
+  //
+  // Taken for the whole offered slate in one go: the chosen meal's snapshot
+  // was previously computed here and then again inside recordOffer, and each
+  // meal cost four separate round trips.
+  const snapshots = await snapshotMeals([chosen, ...decision.alternatives], date);
+  const chosenSnap = snapshots.get(chosen.id)!;
+  const overlap = chosenSnap.pantryOverlapGrams;
+  const ingredientCount = chosenSnap.ingredientsCount;
+  const lastServed = chosenSnap.daysSinceLastServed;
+  const proteinLastServed = chosenSnap.proteinDaysSinceLastServed;
 
   await db.insert(mealHistory).values({
     mealId: chosen.id,
@@ -189,12 +193,13 @@ export async function planMealForDate(
   // labelled comparisons; if none does, the group stays unresolved and
   // trains nothing.
   const offerGroup = `${date}:${Date.now().toString(36)}`;
-  await recordOffer(offerGroup, date, context, chosen, decision.alternatives, decision.usedModel);
+  await recordOffer(offerGroup, date, context, chosen, decision.alternatives, decision.usedModel, snapshots);
 
   // Wide capture, separate from the model's inputs and never trained on.
-  // Records the entire scored candidate pool, the pantry, recent history and
-  // the full weather payload, none of which can be reconstructed later.
-  await logPlanEvent({
+  // Deliberately not awaited: it reads the pantry, recent history and every
+  // candidate's ingredients, and none of that is worth adding to the time
+  // someone spends staring at a loading spinner after clicking a button.
+  void logPlanEvent({
     offerGroup,
     servedDate: date,
     portions,
@@ -216,12 +221,9 @@ export async function planMealForDate(
     now,
   });
 
-  const pantryNames = (await getPantrySummary()).map((p) => p.genericName);
-  const chosenIngredients = await db
-    .select({ genericName: mealIngredients.genericName })
-    .from(mealIngredients)
-    .where(eq(mealIngredients.mealId, chosen.id));
-  const chosenNames = chosenIngredients.map((i) => i.genericName);
+  // Both lists come from the snapshot already taken above, so the
+  // explanation costs nothing extra.
+  const chosenNames = chosenSnap.ingredientNames;
 
   const explanation = explainPick({
     mealName: chosen.name,
@@ -234,7 +236,7 @@ export async function planMealForDate(
     daysSinceLastServed: lastServed,
     proteinDaysSinceLastServed: proteinLastServed,
     expiringUsed: expiring.get(chosen.id)?.names ?? [],
-    pantryUsed: chosenNames.filter((n) => pantryNames.includes(n)),
+    pantryUsed: chosenSnap.pantryUsedNames,
     usedModel: decision.usedModel,
     scoreRank: decision.diagnostics.chosenScoreRank,
     poolSize: decision.diagnostics.finalPoolIds.length,
@@ -295,12 +297,13 @@ export async function setPlanForDate(date: string, mealId: number): Promise<Rota
 
   const cost = costForPortions(meal, portions);
   const firstShop = firstShopCostForPortions(meal, portions);
-  const [overlap, ingredientCount, lastServed, proteinLastServed] = await Promise.all([
-    pantryOverlapGrams(meal.id),
-    countIngredients(meal.id),
-    daysSinceLastServed(meal.id, date),
-    proteinDaysSinceLastServed(meal.primaryProtein, date),
-  ]);
+  // Same batched snapshot as the planner uses, rather than four separate
+  // round trips. This path runs while someone waits on a click too.
+  const snap = (await snapshotMeals([meal], date)).get(meal.id)!;
+  const overlap = snap.pantryOverlapGrams;
+  const ingredientCount = snap.ingredientsCount;
+  const lastServed = snap.daysSinceLastServed;
+  const proteinLastServed = snap.proteinDaysSinceLastServed;
 
   await db.insert(mealHistory).values({
     mealId: meal.id,
@@ -351,44 +354,117 @@ export async function setPlanForDate(date: string, mealId: number): Promise<Rota
  * snapshot taken now — a non-chosen meal has to be judged on the state it
  * was actually offered under, and pantry, recency and weather all drift.
  */
+interface MealSnapshot {
+  pantryOverlapGrams: number;
+  ingredientsCount: number;
+  daysSinceLastServed: number | null;
+  proteinDaysSinceLastServed: number | null;
+  /** Carried so the explanation needs no further queries of its own. */
+  ingredientNames: string[];
+  pantryUsedNames: string[];
+}
+
+/**
+ * Feature snapshots for several meals in three set-based queries.
+ *
+ * Replaces four queries per meal. With a primary plus two alternatives that
+ * was sixteen sequential round trips (the chosen meal's snapshot was also
+ * computed twice), which is what pushed the decline path past Vercel's 60
+ * second ceiling: clicking "not in the mood" runs a full re-plan while
+ * someone waits on the response.
+ */
+async function snapshotMeals(
+  mealsToSnapshot: MealRecord[],
+  date: string
+): Promise<Map<number, MealSnapshot>> {
+  const ids = mealsToSnapshot.map((m) => m.id);
+  const out = new Map<number, MealSnapshot>();
+  if (ids.length === 0) return out;
+
+  const [pantry, ingredientRows, historyRows] = await Promise.all([
+    db.select().from(pantryItems).where(gt(pantryItems.gramsRemaining, "0")),
+    db
+      .select({ mealId: mealIngredients.mealId, genericName: mealIngredients.genericName })
+      .from(mealIngredients)
+      .where(inArray(mealIngredients.mealId, ids)),
+    db
+      .select({
+        mealId: mealHistory.mealId,
+        primaryProtein: mealHistory.primaryProtein,
+        servedDate: mealHistory.servedDate,
+      })
+      .from(mealHistory)
+      .where(and(sql`${mealHistory.servedDate} < ${date}`, isNull(mealHistory.supersededAt))),
+  ]);
+
+  const pantryByName = new Map(pantry.map((p) => [p.genericName, Number(p.gramsRemaining)]));
+  const namesByMeal = new Map<number, string[]>();
+  for (const row of ingredientRows) {
+    const list = namesByMeal.get(row.mealId) ?? [];
+    list.push(row.genericName);
+    namesByMeal.set(row.mealId, list);
+  }
+
+  const lastByMeal = new Map<number, string>();
+  const lastByProtein = new Map<string, string>();
+  for (const h of historyRows) {
+    const m = lastByMeal.get(h.mealId);
+    if (!m || h.servedDate > m) lastByMeal.set(h.mealId, h.servedDate);
+    const p = lastByProtein.get(h.primaryProtein);
+    if (!p || h.servedDate > p) lastByProtein.set(h.primaryProtein, h.servedDate);
+  }
+  const gap = (from: string | undefined): number | null =>
+    from === undefined ? null : Math.round((Date.parse(date) - Date.parse(from)) / 86_400_000);
+
+  for (const meal of mealsToSnapshot) {
+    const names = namesByMeal.get(meal.id) ?? [];
+    out.set(meal.id, {
+      pantryOverlapGrams: names.reduce((sum, n) => sum + (pantryByName.get(n) ?? 0), 0),
+      ingredientsCount: names.length,
+      daysSinceLastServed: gap(lastByMeal.get(meal.id)),
+      proteinDaysSinceLastServed: gap(lastByProtein.get(meal.primaryProtein)),
+      ingredientNames: names,
+      pantryUsedNames: names.filter((n) => pantryByName.has(n)),
+    });
+  }
+  return out;
+}
+
+/**
+ * Writes one row per meal shown in an email, each with its own feature
+ * snapshot taken now — a non-chosen meal has to be judged on the state it
+ * was actually offered under, and pantry, recency and weather all drift.
+ */
 async function recordOffer(
   offerGroup: string,
   date: string,
   context: FeatureContext,
   primary: MealRecord,
   alternatives: MealRecord[],
-  usedModel: boolean
+  usedModel: boolean,
+  snapshots: Map<number, MealSnapshot>
 ): Promise<void> {
   const offered = [primary, ...alternatives];
-
-  const rows = await Promise.all(
-    offered.map(async (meal, i) => {
-      const [overlap, ingredientCount, lastServed, proteinLastServed] = await Promise.all([
-        pantryOverlapGrams(meal.id),
-        countIngredients(meal.id),
-        daysSinceLastServed(meal.id, date),
-        proteinDaysSinceLastServed(meal.primaryProtein, date),
-      ]);
-      return {
-        mealId: meal.id,
-        servedDate: date,
-        offerGroup,
-        wasPrimary: i === 0,
-        wasChosen: false,
-        dayOfWeek: context.dayOfWeek,
-        isWeekend: context.isWeekend,
-        temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
-        apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
-        precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
-        pantryOverlapGrams: String(overlap),
-        daysSinceLastServed: lastServed,
-        proteinDaysSinceLastServed: proteinLastServed,
-        ingredientsCount: ingredientCount,
-        usedModel,
-      };
-    })
-  );
-
+  const rows = offered.map((meal, i) => {
+    const snap = snapshots.get(meal.id);
+    return {
+      mealId: meal.id,
+      servedDate: date,
+      offerGroup,
+      wasPrimary: i === 0,
+      wasChosen: false,
+      dayOfWeek: context.dayOfWeek,
+      isWeekend: context.isWeekend,
+      temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
+      apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
+      precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
+      pantryOverlapGrams: String(snap?.pantryOverlapGrams ?? 0),
+      daysSinceLastServed: snap?.daysSinceLastServed ?? null,
+      proteinDaysSinceLastServed: snap?.proteinDaysSinceLastServed ?? null,
+      ingredientsCount: snap?.ingredientsCount ?? 0,
+      usedModel,
+    };
+  });
   await db.insert(mealOffers).values(rows);
 }
 

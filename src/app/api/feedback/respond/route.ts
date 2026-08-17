@@ -115,8 +115,11 @@ export async function GET(req: NextRequest) {
   // Wide capture, never trained on. Reply latency in particular cannot be
   // reconstructed afterwards, and a reply two minutes after the email
   // plausibly means something different from one at 11pm.
+  // Best-effort, and deliberately not awaited. This route already runs a
+  // full re-plan on a decline, and everything optional added to it is time
+  // spent on a loading spinner — the route has timed out here before.
   const offered = offerGroup ? await offerContext(offerGroup, mealId) : null;
-  await logFeedbackEvent({
+  void logFeedbackEvent({
     offerGroup,
     servedDate: date,
     mealId,
