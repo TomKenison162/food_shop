@@ -247,7 +247,11 @@ export async function sendDinnerReminder(
   const { error } = await m.resend.emails.send({
     from: m.from,
     to: m.to,
-    subject: `Tonight: ${meal.name}`,
+    // The recipient's name is in the subject so a shared inbox can route
+    // it. Needed while Resend has no verified domain and will only deliver
+    // to the account owner: everyone's mail arrives in one place, and a
+    // filter forwards each person's on by matching this.
+    subject: `Tonight: ${meal.name} (${user.name})`,
     html,
   });
 

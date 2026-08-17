@@ -129,7 +129,7 @@ export async function sendWeeklyDigest(
   const { error } = await m.resend.emails.send({
     from: m.from,
     to: m.to,
-    subject: `Your week: £${spent.toFixed(2)} across ${cooked.length} ${cooked.length === 1 ? "meal" : "meals"}`,
+    subject: `Your week: £${spent.toFixed(2)} across ${cooked.length} ${cooked.length === 1 ? "meal" : "meals"} (${user.name})`,
     html,
   });
 
