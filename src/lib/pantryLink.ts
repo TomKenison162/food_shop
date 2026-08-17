@@ -20,17 +20,27 @@ function secret(): string {
   return s;
 }
 
-function sign(date: string, genericName: string): string {
-  return createHmac("sha256", secret()).update(`pantry|${date}|${genericName}`).digest("hex");
+function sign(userId: number, date: string, genericName: string): string {
+  return createHmac("sha256", secret()).update(`pantry|${userId}|${date}|${genericName}`).digest("hex");
 }
 
-export function buildPantryMissingLink(appUrl: string, date: string, genericName: string): string {
-  const params = new URLSearchParams({ date, name: genericName, sig: sign(date, genericName) });
+export function buildPantryMissingLink(
+  appUrl: string,
+  userId: number,
+  date: string,
+  genericName: string
+): string {
+  const params = new URLSearchParams({
+    user: String(userId),
+    date,
+    name: genericName,
+    sig: sign(userId, date, genericName),
+  });
   return `${appUrl}/api/pantry/missing?${params.toString()}`;
 }
 
-export function verifyPantryLink(date: string, genericName: string, sig: string): boolean {
-  const expected = sign(date, genericName);
+export function verifyPantryLink(userId: number, date: string, genericName: string, sig: string): boolean {
+  const expected = sign(userId, date, genericName);
   const a = Buffer.from(expected, "hex");
   const b = Buffer.from(sig, "hex");
   return a.length === b.length && timingSafeEqual(a, b);

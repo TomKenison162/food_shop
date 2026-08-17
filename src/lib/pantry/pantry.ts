@@ -4,6 +4,7 @@ import { pantryItems, mealIngredients } from "../db/schema";
 import { parseQuantityToGrams } from "../pricing/quantity";
 import { shelfLifeDays } from "./shelfLife";
 import { addDaysToDateString, londonDateString } from "../date";
+import { requireUserId } from "../userGuard";
 
 const MIN_LEFTOVER_GRAMS = 20; // ignore trivial scraps
 
@@ -28,7 +29,8 @@ function notExpired(today: string) {
  * Each entry gets an expiry from its ingredient's shelf life, and topping up
  * an existing entry resets the clock (you just opened a fresh pack).
  */
-export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<void> {
+export async function recordPurchaseLeftoversForMeal(userId: number, mealId: number): Promise<void> {
+  requireUserId(userId, "recordPurchaseLeftoversForMeal");
   const ingredients = await db.query.mealIngredients.findMany({ where: eq(mealIngredients.mealId, mealId) });
   const today = londonDateString();
 
@@ -39,7 +41,7 @@ export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<vo
 
     const expiresOn = addDaysToDateString(today, shelfLifeDays(ing.genericName));
     const existing = await db.query.pantryItems.findFirst({
-      where: eq(pantryItems.genericName, ing.genericName),
+      where: and(eq(pantryItems.userId, userId), eq(pantryItems.genericName, ing.genericName)),
     });
 
     if (existing) {
@@ -57,6 +59,7 @@ export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<vo
         .where(eq(pantryItems.id, existing.id));
     } else {
       await db.insert(pantryItems).values({
+        userId,
         genericName: ing.genericName,
         gramsRemaining: String(leftover),
         sourceMealId: mealId,
@@ -73,14 +76,15 @@ export async function recordPurchaseLeftoversForMeal(mealId: number): Promise<vo
  * parsed from the quantity string) — a flat per-item guess would drain a jar
  * of spices as fast as a pack of chicken.
  */
-export async function consumePantryForMeal(mealId: number): Promise<void> {
+export async function consumePantryForMeal(userId: number, mealId: number): Promise<void> {
+  requireUserId(userId, "consumePantryForMeal");
   const ingredients = await db.query.mealIngredients.findMany({
     where: eq(mealIngredients.mealId, mealId),
   });
 
   for (const ing of ingredients) {
     const existing = await db.query.pantryItems.findFirst({
-      where: eq(pantryItems.genericName, ing.genericName),
+      where: and(eq(pantryItems.userId, userId), eq(pantryItems.genericName, ing.genericName)),
     });
     if (!existing) continue;
 
@@ -108,16 +112,18 @@ export async function consumePantryForMeal(mealId: number): Promise<void> {
  * Order matters: leftovers are banked before consumption, so a meal that
  * both opens a new pack and draws on existing stock nets out correctly.
  */
-export async function recordMealCooked(mealId: number): Promise<void> {
-  await recordPurchaseLeftoversForMeal(mealId);
-  await consumePantryForMeal(mealId);
+export async function recordMealCooked(userId: number, mealId: number): Promise<void> {
+  requireUserId(userId, "recordMealCooked");
+  await recordPurchaseLeftoversForMeal(userId, mealId);
+  await consumePantryForMeal(userId, mealId);
 }
 
 /** Clears out expired and empty entries. Safe to call often. */
-export async function purgeStalePantryItems(today = londonDateString()): Promise<number> {
+export async function purgeStalePantryItems(userId: number, today = londonDateString()): Promise<number> {
+  requireUserId(userId, "purgeStalePantryItems");
   const removed = await db
     .delete(pantryItems)
-    .where(or(lt(pantryItems.expiresOn, today), lt(pantryItems.gramsRemaining, "1")))
+    .where(and(eq(pantryItems.userId, userId), or(lt(pantryItems.expiresOn, today), lt(pantryItems.gramsRemaining, "1"))))
     .returning({ id: pantryItems.id });
   return removed.length;
 }
@@ -132,11 +138,12 @@ export interface PantrySummaryItem {
   daysLeft: number | null;
 }
 
-export async function getPantrySummary(today = londonDateString()): Promise<PantrySummaryItem[]> {
+export async function getPantrySummary(userId: number, today = londonDateString()): Promise<PantrySummaryItem[]> {
+  requireUserId(userId, "getPantrySummary");
   const rows = await db
     .select()
     .from(pantryItems)
-    .where(and(gt(pantryItems.gramsRemaining, "0"), notExpired(today)));
+    .where(and(eq(pantryItems.userId, userId), gt(pantryItems.gramsRemaining, "0"), notExpired(today)));
 
   return rows.map((r) => ({
     genericName: r.genericName,
@@ -161,13 +168,15 @@ export const EXPIRING_SOON_DAYS = 3;
  * daily job, which already has real work to do under a timeout.
  */
 export async function expiringOverlapByMeal(
+  userId: number,
   today = londonDateString()
 ): Promise<Map<number, { grams: number; names: string[] }>> {
+  requireUserId(userId, "expiringOverlapByMeal");
   const cutoff = addDaysToDateString(today, EXPIRING_SOON_DAYS);
   const stock = await db
     .select()
     .from(pantryItems)
-    .where(and(gt(pantryItems.gramsRemaining, "0"), notExpired(today)));
+    .where(and(eq(pantryItems.userId, userId), gt(pantryItems.gramsRemaining, "0"), notExpired(today)));
 
   const soon = stock.filter((s) => s.expiresOn !== null && s.expiresOn <= cutoff);
   const out = new Map<number, { grams: number; names: string[] }>();
@@ -197,7 +206,8 @@ export async function expiringOverlapByMeal(
  * matched by generic ingredient name. Used to bias meal selection toward
  * using up what was already bought instead of buying something new.
  */
-export async function pantryOverlapGrams(mealId: number, today = londonDateString()): Promise<number> {
+export async function pantryOverlapGrams(userId: number, mealId: number, today = londonDateString()): Promise<number> {
+  requireUserId(userId, "pantryOverlapGrams");
   const ingredients = await db.query.mealIngredients.findMany({
     where: eq(mealIngredients.mealId, mealId),
   });
@@ -208,7 +218,12 @@ export async function pantryOverlapGrams(mealId: number, today = londonDateStrin
     .select()
     .from(pantryItems)
     .where(
-      and(inArray(pantryItems.genericName, names), gt(pantryItems.gramsRemaining, "0"), notExpired(today))
+      and(
+        eq(pantryItems.userId, userId),
+        inArray(pantryItems.genericName, names),
+        gt(pantryItems.gramsRemaining, "0"),
+        notExpired(today)
+      )
     );
 
   return rows.reduce((sum, r) => sum + Number(r.gramsRemaining), 0);

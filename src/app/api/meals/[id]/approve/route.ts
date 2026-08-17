@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUserParam } from "@/lib/userParam";
 import { db } from "@/lib/db/client";
 import { approvedQueue } from "@/lib/db/schema";
 import { priceMealIfNeeded } from "@/lib/pricing/priceApproved";
@@ -6,12 +7,13 @@ import { priceMealIfNeeded } from "@/lib/pricing/priceApproved";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const userId = requireUserParam(req);
   const mealId = Number(params.id);
   if (!Number.isInteger(mealId)) {
     return NextResponse.json({ error: "Invalid meal id" }, { status: 400 });
   }
-  await db.insert(approvedQueue).values({ mealId });
+  await db.insert(approvedQueue).values({ userId, mealId });
 
   // Price it now that it can actually be chosen. Costs nothing for a meal
   // whose ingredients other dishes already resolved, so the bill scales with

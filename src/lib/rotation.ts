@@ -8,6 +8,7 @@ import { dishFeatures } from "./ml/dishFeatures";
 import { getCurrentWeather } from "./weather/weather";
 import { scoreMealsForTonight } from "./ml/model";
 import { getPortionsSetting } from "./settings";
+import { requireUserId } from "./userGuard";
 import { getPantrySummary } from "./pantry/pantry";
 import { spentInWeek } from "./budgetSpend";
 import { costForPortions, firstShopCostForPortions, WEEKLY_BUDGET_GBP } from "./budget";
@@ -45,9 +46,14 @@ export interface RotationResult {
 }
 
 /** The live (non-superseded) plan row for a date, if one exists. */
-export async function getPlannedMeal(date: string): Promise<PlannedMeal | undefined> {
+export async function getPlannedMeal(userId: number, date: string): Promise<PlannedMeal | undefined> {
+  requireUserId(userId, "getPlannedMeal");
   return db.query.mealHistory.findFirst({
-    where: and(eq(mealHistory.servedDate, date), isNull(mealHistory.supersededAt)),
+    where: and(
+      eq(mealHistory.userId, userId),
+      eq(mealHistory.servedDate, date),
+      isNull(mealHistory.supersededAt)
+    ),
   });
 }
 
@@ -60,18 +66,20 @@ export async function getPlannedMeal(date: string): Promise<PlannedMeal | undefi
  * engine handing back the same dish.
  */
 export async function planMealForDate(
+  userId: number,
   date: string,
   opts: { excludeMealIds?: number[]; now?: Date; useItUp?: boolean } = {}
 ): Promise<RotationResult | null> {
+  requireUserId(userId, "planMealForDate");
   const { excludeMealIds = [], now = new Date(), useItUp = false } = opts;
-  const portions = await getPortionsSetting();
+  const portions = await getPortionsSetting(userId);
 
-  const existing = await getPlannedMeal(date);
+  const existing = await getPlannedMeal(userId, date);
   if (existing) {
     const meal = await db.query.meals.findFirst({ where: eq(meals.id, existing.mealId) });
     if (meal) {
-      const [spent, firstShopSpent] = await spendTotals(date);
-      const prior = await latestOfferForDate(date);
+      const [spent, firstShopSpent] = await spendTotals(userId, date);
+      const prior = await latestOfferForDate(userId, date);
       return {
         meal,
         explanation: "",
@@ -115,22 +123,22 @@ export async function planMealForDate(
     precipitationMm: weather.precipitationMm,
   };
 
-  const approvedMeals = (await approvedMealRecords()).filter((m) => !excludeMealIds.includes(m.id));
+  const approvedMeals = (await approvedMealRecords(userId)).filter((m) => !excludeMealIds.includes(m.id));
   if (approvedMeals.length === 0) return null;
 
   const windowStart = addDaysToDateString(date, -REPEAT_WINDOW_DAYS);
   const recentServes = await db
     .select({ mealId: mealHistory.mealId, count: sql<number>`count(*)`.as("count") })
     .from(mealHistory)
-    .where(and(gte(mealHistory.servedDate, windowStart), isNull(mealHistory.supersededAt)))
+    .where(and(eq(mealHistory.userId, userId), gte(mealHistory.servedDate, windowStart), isNull(mealHistory.supersededAt)))
     .groupBy(mealHistory.mealId);
   const servesInWindow = new Map(recentServes.map((r) => [r.mealId, Number(r.count)]));
 
-  const yesterday = await getPlannedMeal(addDaysToDateString(date, -1));
-  const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(date);
-  const expiring = await expiringOverlapByMeal(date);
+  const yesterday = await getPlannedMeal(userId, addDaysToDateString(date, -1));
+  const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(userId, date);
+  const expiring = await expiringOverlapByMeal(userId, date);
 
-  const scoreList = await scoreMealsForTonight(approvedMeals, context);
+  const scoreList = await scoreMealsForTonight(userId, approvedMeals, context);
   const scores = scoreList ? new Map(approvedMeals.map((m, i) => [m.id, scoreList[i]])) : null;
 
   const decision = decideTonightsDinner({
@@ -157,7 +165,7 @@ export async function planMealForDate(
   // Taken for the whole offered slate in one go: the chosen meal's snapshot
   // was previously computed here and then again inside recordOffer, and each
   // meal cost four separate round trips.
-  const snapshots = await snapshotMeals([chosen, ...decision.alternatives], date);
+  const snapshots = await snapshotMeals(userId, [chosen, ...decision.alternatives], date);
   const chosenSnap = snapshots.get(chosen.id)!;
   const overlap = chosenSnap.pantryOverlapGrams;
   const ingredientCount = chosenSnap.ingredientsCount;
@@ -165,6 +173,7 @@ export async function planMealForDate(
   const proteinLastServed = chosenSnap.proteinDaysSinceLastServed;
 
   await db.insert(mealHistory).values({
+    userId,
     mealId: chosen.id,
     primaryProtein: chosen.primaryProtein,
     servedDate: date,
@@ -193,13 +202,14 @@ export async function planMealForDate(
   // labelled comparisons; if none does, the group stays unresolved and
   // trains nothing.
   const offerGroup = `${date}:${Date.now().toString(36)}`;
-  await recordOffer(offerGroup, date, context, chosen, decision.alternatives, decision.usedModel, snapshots);
+  await recordOffer(userId, offerGroup, date, context, chosen, decision.alternatives, decision.usedModel, snapshots);
 
   // Wide capture, separate from the model's inputs and never trained on.
   // Deliberately not awaited: it reads the pantry, recent history and every
   // candidate's ingredients, and none of that is worth adding to the time
   // someone spends staring at a loading spinner after clicking a button.
   void logPlanEvent({
+    userId,
     offerGroup,
     servedDate: date,
     portions,
@@ -276,16 +286,17 @@ export async function planMealForDate(
  * and genuinely passed over, which is exactly the comparison the preference
  * model learns from.
  */
-export async function setPlanForDate(date: string, mealId: number): Promise<RotationResult | null> {
+export async function setPlanForDate(userId: number, date: string, mealId: number): Promise<RotationResult | null> {
+  requireUserId(userId, "setPlanForDate");
   const meal = await db.query.meals.findFirst({ where: eq(meals.id, mealId) });
   if (!meal || meal.deletedAt !== null) return null;
 
   await db
     .update(mealHistory)
     .set({ supersededAt: new Date() })
-    .where(and(eq(mealHistory.servedDate, date), isNull(mealHistory.supersededAt)));
+    .where(and(eq(mealHistory.userId, userId), eq(mealHistory.servedDate, date), isNull(mealHistory.supersededAt)));
 
-  const portions = await getPortionsSetting();
+  const portions = await getPortionsSetting(userId);
   const dow = dayOfWeekForDateString(date);
   const context: FeatureContext = {
     dayOfWeek: dow,
@@ -299,13 +310,14 @@ export async function setPlanForDate(date: string, mealId: number): Promise<Rota
   const firstShop = firstShopCostForPortions(meal, portions);
   // Same batched snapshot as the planner uses, rather than four separate
   // round trips. This path runs while someone waits on a click too.
-  const snap = (await snapshotMeals([meal], date)).get(meal.id)!;
+  const snap = (await snapshotMeals(userId, [meal], date)).get(meal.id)!;
   const overlap = snap.pantryOverlapGrams;
   const ingredientCount = snap.ingredientsCount;
   const lastServed = snap.daysSinceLastServed;
   const proteinLastServed = snap.proteinDaysSinceLastServed;
 
   await db.insert(mealHistory).values({
+    userId,
     mealId: meal.id,
     primaryProtein: meal.primaryProtein,
     servedDate: date,
@@ -325,8 +337,8 @@ export async function setPlanForDate(date: string, mealId: number): Promise<Rota
     usedModel: false,
   });
 
-  const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(date);
-  const prior = await latestOfferForDate(date);
+  const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(userId, date);
+  const prior = await latestOfferForDate(userId, date);
 
   return {
     meal,
@@ -374,6 +386,7 @@ interface MealSnapshot {
  * someone waits on the response.
  */
 async function snapshotMeals(
+  userId: number,
   mealsToSnapshot: MealRecord[],
   date: string
 ): Promise<Map<number, MealSnapshot>> {
@@ -382,7 +395,7 @@ async function snapshotMeals(
   if (ids.length === 0) return out;
 
   const [pantry, ingredientRows, historyRows] = await Promise.all([
-    db.select().from(pantryItems).where(gt(pantryItems.gramsRemaining, "0")),
+    db.select().from(pantryItems).where(and(eq(pantryItems.userId, userId), gt(pantryItems.gramsRemaining, "0"))),
     db
       .select({ mealId: mealIngredients.mealId, genericName: mealIngredients.genericName })
       .from(mealIngredients)
@@ -394,7 +407,7 @@ async function snapshotMeals(
         servedDate: mealHistory.servedDate,
       })
       .from(mealHistory)
-      .where(and(sql`${mealHistory.servedDate} < ${date}`, isNull(mealHistory.supersededAt))),
+      .where(and(eq(mealHistory.userId, userId), sql`${mealHistory.servedDate} < ${date}`, isNull(mealHistory.supersededAt))),
   ]);
 
   const pantryByName = new Map(pantry.map((p) => [p.genericName, Number(p.gramsRemaining)]));
@@ -436,6 +449,7 @@ async function snapshotMeals(
  * was actually offered under, and pantry, recency and weather all drift.
  */
 async function recordOffer(
+  userId: number,
   offerGroup: string,
   date: string,
   context: FeatureContext,
@@ -448,6 +462,7 @@ async function recordOffer(
   const rows = offered.map((meal, i) => {
     const snap = snapshots.get(meal.id);
     return {
+      userId,
       mealId: meal.id,
       servedDate: date,
       offerGroup,
@@ -475,37 +490,40 @@ async function recordOffer(
  * usable: an unresolved group means nobody replied, and inferring dislike
  * from silence would be exactly the confounded label this replaced.
  */
-export async function resolveOffer(offerGroup: string, chosenMealId: number): Promise<void> {
+export async function resolveOffer(userId: number, offerGroup: string, chosenMealId: number): Promise<void> {
+  requireUserId(userId, "resolveOffer");
   const now = new Date();
   await db
     .update(mealOffers)
     .set({ resolvedAt: now, wasChosen: false })
-    .where(eq(mealOffers.offerGroup, offerGroup));
+    .where(and(eq(mealOffers.userId, userId), eq(mealOffers.offerGroup, offerGroup)));
   await db
     .update(mealOffers)
     .set({ resolvedAt: now, wasChosen: true })
-    .where(and(eq(mealOffers.offerGroup, offerGroup), eq(mealOffers.mealId, chosenMealId)));
+    .where(and(eq(mealOffers.userId, userId), eq(mealOffers.offerGroup, offerGroup), eq(mealOffers.mealId, chosenMealId)));
 }
 
 /**
  * Marks an offer group as answered with nobody winning — a decline of the
  * whole slate. The losers are real negatives; there just isn't a positive.
  */
-export async function resolveOfferAsDeclined(offerGroup: string): Promise<void> {
+export async function resolveOfferAsDeclined(userId: number, offerGroup: string): Promise<void> {
+  requireUserId(userId, "resolveOfferAsDeclined");
   await db
     .update(mealOffers)
     .set({ resolvedAt: new Date() })
-    .where(eq(mealOffers.offerGroup, offerGroup));
+    .where(and(eq(mealOffers.userId, userId), eq(mealOffers.offerGroup, offerGroup)));
 }
 
 /** The most recent offer group for a date, with its non-primary meals. */
 async function latestOfferForDate(
+  userId: number,
   date: string
 ): Promise<{ offerGroup: string; alternatives: MealRecord[] }> {
   const rows = await db
     .select()
     .from(mealOffers)
-    .where(eq(mealOffers.servedDate, date))
+    .where(and(eq(mealOffers.userId, userId), eq(mealOffers.servedDate, date)))
     .orderBy(desc(mealOffers.createdAt));
 
   if (rows.length === 0) return { offerGroup: `${date}:none`, alternatives: [] };
@@ -520,13 +538,14 @@ async function latestOfferForDate(
 
 /** Where a meal sat in the slate it was offered in, and how big that slate was. */
 export async function offerContext(
+  userId: number,
   offerGroup: string,
   mealId: number
 ): Promise<{ position: number; count: number } | null> {
   const rows = await db
     .select({ mealId: mealOffers.mealId, wasPrimary: mealOffers.wasPrimary })
     .from(mealOffers)
-    .where(eq(mealOffers.offerGroup, offerGroup));
+    .where(and(eq(mealOffers.userId, userId), eq(mealOffers.offerGroup, offerGroup)));
   if (rows.length === 0) return null;
   const ordered = [...rows].sort((a, b) => Number(b.wasPrimary) - Number(a.wasPrimary));
   const position = ordered.findIndex((r) => r.mealId === mealId);
@@ -551,11 +570,12 @@ async function currentModelInfo(): Promise<unknown> {
 }
 
 /** The offer group a given meal was part of on a date, if any. */
-export async function offerGroupFor(date: string, mealId: number): Promise<string | null> {
+export async function offerGroupFor(userId: number, date: string, mealId: number): Promise<string | null> {
+  requireUserId(userId, "offerGroupFor");
   const row = await db
     .select({ offerGroup: mealOffers.offerGroup })
     .from(mealOffers)
-    .where(and(eq(mealOffers.servedDate, date), eq(mealOffers.mealId, mealId)))
+    .where(and(eq(mealOffers.userId, userId), eq(mealOffers.servedDate, date), eq(mealOffers.mealId, mealId)))
     .orderBy(desc(mealOffers.createdAt))
     .limit(1);
   return row[0]?.offerGroup ?? null;
@@ -563,10 +583,12 @@ export async function offerGroupFor(date: string, mealId: number): Promise<strin
 
 /** Today's dinner (Europe/London). */
 export function selectTonightsDinner(
+  userId: number,
   opts: { now?: Date; useItUp?: boolean } = {}
 ): Promise<RotationResult | null> {
+  requireUserId(userId, "selectTonightsDinner");
   const now = opts.now ?? new Date();
-  return planMealForDate(londonDateString(now), { now, useItUp: opts.useItUp });
+  return planMealForDate(userId, londonDateString(now), { now, useItUp: opts.useItUp });
 }
 
 /**
@@ -574,32 +596,33 @@ export function selectTonightsDinner(
  * excluding everything already rejected for that date. The superseded row
  * is kept — it carries a real "declined in this context" training label.
  */
-export async function replacePlanForDate(date: string): Promise<RotationResult | null> {
+export async function replacePlanForDate(userId: number, date: string): Promise<RotationResult | null> {
+  requireUserId(userId, "replacePlanForDate");
   const rejected = await db
     .select({ mealId: mealHistory.mealId })
     .from(mealHistory)
-    .where(eq(mealHistory.servedDate, date));
+    .where(and(eq(mealHistory.userId, userId), eq(mealHistory.servedDate, date)));
 
   await db
     .update(mealHistory)
     .set({ supersededAt: new Date() })
-    .where(and(eq(mealHistory.servedDate, date), isNull(mealHistory.supersededAt)));
+    .where(and(eq(mealHistory.userId, userId), eq(mealHistory.servedDate, date), isNull(mealHistory.supersededAt)));
 
-  return planMealForDate(date, { excludeMealIds: rejected.map((r) => r.mealId) });
+  return planMealForDate(userId, date, { excludeMealIds: rejected.map((r) => r.mealId) });
 }
 
 
 /** [marginal, firstShop] spend so far this calendar week, excluding `today`. */
-async function spendTotals(today: string): Promise<[number, number]> {
-  return Promise.all([spentInWeek(today), spentInWeek(today, "firstShop")]);
+async function spendTotals(userId: number, today: string): Promise<[number, number]> {
+  return Promise.all([spentInWeek(userId, today), spentInWeek(userId, today, "firstShop")]);
 }
 
-async function approvedMealRecords(): Promise<MealRecord[]> {
+async function approvedMealRecords(userId: number): Promise<MealRecord[]> {
   const rows = await db
     .select({ meal: meals })
     .from(approvedQueue)
     .innerJoin(meals, eq(approvedQueue.mealId, meals.id))
-    .where(isNull(meals.deletedAt));
+    .where(and(eq(approvedQueue.userId, userId), isNull(meals.deletedAt)));
   const seen = new Map<number, MealRecord>();
   for (const r of rows) seen.set(r.meal.id, r.meal);
   return [...seen.values()];
@@ -610,7 +633,7 @@ async function countIngredients(mealId: number): Promise<number> {
   return rows.length;
 }
 
-export async function daysSinceLastServed(mealId: number, asOfDate: string): Promise<number | null> {
+export async function daysSinceLastServed(userId: number, mealId: number, asOfDate: string): Promise<number | null> {
   const rows = await db
     .select({ servedDate: mealHistory.servedDate })
     .from(mealHistory)

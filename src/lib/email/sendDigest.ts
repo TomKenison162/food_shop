@@ -5,6 +5,7 @@ import { meals, mealHistory, mlModel } from "../db/schema";
 import { addDaysToDateString, londonDateString } from "../date";
 import { WEEKLY_BUDGET_GBP } from "../budget";
 import { DECLINE_LABELS, isDeclineReason } from "../declineReasons";
+import { getUser } from "../users";
 
 export interface SendDigestResult {
   sent: boolean;
@@ -15,11 +16,10 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function mailer(): { resend: Resend; from: string; to: string } | null {
+function mailer(to: string): { resend: Resend; from: string; to: string } | null {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.REMINDER_FROM_EMAIL;
-  const to = process.env.REMINDER_TO_EMAIL;
-  if (!apiKey || !from || !to) return null;
+  if (!apiKey || !from) return null;
   return { resend: new Resend(apiKey), from, to };
 }
 
@@ -33,8 +33,13 @@ const META = 'style="color:#6b7280;font-size:14px"';
  * back. A week is also the right window for the budget, which is the one
  * number that only makes sense in aggregate.
  */
-export async function sendWeeklyDigest(today = londonDateString()): Promise<SendDigestResult> {
-  const m = mailer();
+export async function sendWeeklyDigest(
+  userId: number,
+  today = londonDateString()
+): Promise<SendDigestResult> {
+  const user = await getUser(userId);
+  if (!user) return { sent: false, reason: `No such user: ${userId}` };
+  const m = mailer(user.email);
   if (!m) return { sent: false, reason: "Email env vars not fully configured." };
 
   const weekStart = addDaysToDateString(today, -6);
@@ -42,7 +47,7 @@ export async function sendWeeklyDigest(today = londonDateString()): Promise<Send
     .select({ history: mealHistory, meal: meals })
     .from(mealHistory)
     .innerJoin(meals, eq(mealHistory.mealId, meals.id))
-    .where(and(gte(mealHistory.servedDate, weekStart), lte(mealHistory.servedDate, today)))
+    .where(and(eq(mealHistory.userId, userId), gte(mealHistory.servedDate, weekStart), lte(mealHistory.servedDate, today)))
     .orderBy(mealHistory.servedDate);
 
   const live = rows.filter((r) => r.history.supersededAt === null);
@@ -61,11 +66,14 @@ export async function sendWeeklyDigest(today = londonDateString()): Promise<Send
     if (r && isDeclineReason(r)) reasonCounts.set(r, (reasonCounts.get(r) ?? 0) + 1);
   }
 
-  const model = await db.query.mlModel.findFirst({ orderBy: desc(mlModel.trainedAt) });
+  const model = await db.query.mlModel.findFirst({
+    where: eq(mlModel.userId, userId),
+    orderBy: desc(mlModel.trainedAt),
+  });
   const labelled = await db
     .select({ id: mealHistory.id })
     .from(mealHistory)
-    .where(isNotNull(mealHistory.accepted));
+    .where(and(eq(mealHistory.userId, userId), isNotNull(mealHistory.accepted)));
 
   const dayRows = live
     .map((r) => {

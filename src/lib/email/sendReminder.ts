@@ -7,6 +7,7 @@ import { getPantrySummary } from "../pantry/pantry";
 import { costForPortions, WEEKLY_BUDGET_GBP } from "../budget";
 import { ingredientsForMeal } from "../shoppingList";
 import { dishFeatures, type DishFeatures } from "../ml/dishFeatures";
+import { getUser } from "../users";
 
 export interface SendReminderResult {
   sent: boolean;
@@ -22,12 +23,18 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function mailer(): { resend: Resend; from: string; to: string } | null {
+/**
+ * REMINDER_TO_EMAIL is now only a fallback for the alert channel. Each
+ * user's reminder goes to their own address, looked up per send — a single
+ * global recipient is precisely the kind of shared global that would send
+ * one household member another's dinner.
+ */
+function mailer(to?: string): { resend: Resend; from: string; to: string } | null {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.REMINDER_FROM_EMAIL;
-  const to = process.env.REMINDER_TO_EMAIL;
-  if (!apiKey || !from || !to) return null;
-  return { resend: new Resend(apiKey), from, to };
+  const recipient = to ?? process.env.REMINDER_TO_EMAIL;
+  if (!apiKey || !from || !recipient) return null;
+  return { resend: new Resend(apiKey), from, to: recipient };
 }
 
 
@@ -74,8 +81,13 @@ function sentAtLondon(date = new Date()): string {
  * the dish, the method, a fully priced shopping list for exactly that meal
  * (minus anything the pantry already covers), and the Yes/No links.
  */
-export async function sendDinnerReminder(result: RotationResult): Promise<SendReminderResult> {
-  const m = mailer();
+export async function sendDinnerReminder(
+  userId: number,
+  result: RotationResult
+): Promise<SendReminderResult> {
+  const user = await getUser(userId);
+  if (!user) return { sent: false, reason: `No such user: ${userId}` };
+  const m = mailer(user.email);
   if (!m) {
     return {
       sent: false,
@@ -87,7 +99,7 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
   const { meal, portions, cost, firstShopCost: firstShop, spentThisWeekGBP, firstShopSpentThisWeekGBP } =
     result;
 
-  const [ingredients, pantry] = await Promise.all([ingredientsForMeal(meal.id), getPantrySummary()]);
+  const [ingredients, pantry] = await Promise.all([ingredientsForMeal(meal.id), getPantrySummary(userId)]);
   const pantryByName = new Map(pantry.map((p) => [p.genericName, p]));
 
   const toBuy = ingredients.filter((i) => !pantryByName.has(i.genericName));
@@ -132,7 +144,7 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
     ? `<h2>Already in</h2><ul>${covered
         .map((i) => {
           const p = pantryByName.get(i.genericName)!;
-          const missing = buildPantryMissingLink(appUrl, result.planDate, i.genericName);
+          const missing = buildPantryMissingLink(appUrl, userId, result.planDate, i.genericName);
           return `<li>${esc(i.genericName)}, ~${p.gramsRemaining}g on hand${
             p.daysLeft !== null && p.daysLeft <= 2 ? " <strong>(use it up)</strong>" : ""
           } <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
@@ -164,7 +176,7 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
     ? `<h2>Or instead</h2>${result.alternatives
         .map((alt) => {
           const altCost = costForPortions(alt, portions);
-          const link = buildFeedbackLink(appUrl, { mealId: alt.id, date, action: "choose" });
+          const link = buildFeedbackLink(appUrl, { userId, mealId: alt.id, date, action: "choose" });
           return `<div style="border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-bottom:10px">
             <strong>${esc(alt.name)}</strong>${
               altCost !== null ? ` <span style="color:#6b7280">£${altCost.toFixed(2)}</span>` : ""
@@ -186,7 +198,7 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
    * outright rather than recorded as dislike.
    */
   const declineHtml = `<h2>None of these?</h2><p>${DECLINE_REASONS.map((reason) =>
-    btn(buildFeedbackLink(appUrl, { mealId: meal.id, date, action: "decline", reason }), DECLINE_LABELS[reason], true)
+    btn(buildFeedbackLink(appUrl, { userId, mealId: meal.id, date, action: "decline", reason }), DECLINE_LABELS[reason], true)
   ).join("")}</p>`;
 
   const notes: string[] = [];
@@ -208,7 +220,7 @@ export async function sendDinnerReminder(result: RotationResult): Promise<SendRe
 
     <p style="margin-bottom:4px"><strong>Cooking it? Rate it after.</strong></p>
     <p>${RATING_LABELS.map((label, i) =>
-      btn(buildFeedbackLink(appUrl, { mealId: meal.id, date, action: "accept", rating: i + 1 }), label, i + 1 < 4)
+      btn(buildFeedbackLink(appUrl, { userId, mealId: meal.id, date, action: "accept", rating: i + 1 }), label, i + 1 < 4)
     ).join("")}</p>
 
     <h2>Method</h2>

@@ -1,4 +1,5 @@
-import { and, gte, isNull, lt, sql } from "drizzle-orm";
+import { requireUserId } from "./userGuard";
+import { and, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { mealHistory } from "./db/schema";
 import { startOfWeek } from "./date";
@@ -18,6 +19,7 @@ import { startOfWeek } from "./date";
  *                  week where you're restocking staples
  */
 export async function spentInWeek(
+  userId: number,
   today: string,
   basis: "marginal" | "firstShop" = "marginal"
 ): Promise<number> {
@@ -28,6 +30,7 @@ export async function spentInWeek(
     .from(mealHistory)
     .where(
       and(
+      eq(mealHistory.userId, requireUserId(userId, "spentInWeek")),
         gte(mealHistory.servedDate, weekStart),
         lt(mealHistory.servedDate, today),
         isNull(mealHistory.supersededAt)

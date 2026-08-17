@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { pantryItems } from "@/lib/db/schema";
 import { verifyPantryLink } from "@/lib/pantryLink";
@@ -47,16 +47,19 @@ function esc(s: string): string {
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
+  const userId = Number(sp.get("user"));
   const date = sp.get("date") ?? "";
   const name = sp.get("name") ?? "";
   const sig = sp.get("sig") ?? "";
 
-  if (!date || !name) return htmlPage("<p>That link looks malformed.</p>");
-  if (!verifyPantryLink(date, name, sig)) return htmlPage("<p>That link isn't valid.</p>");
+  if (!Number.isInteger(userId) || userId <= 0 || !date || !name) {
+    return htmlPage("<p>That link looks malformed.</p>");
+  }
+  if (!verifyPantryLink(userId, date, name, sig)) return htmlPage("<p>That link isn't valid.</p>");
 
   const removed = await db
     .delete(pantryItems)
-    .where(eq(pantryItems.genericName, name))
+    .where(and(eq(pantryItems.userId, userId), eq(pantryItems.genericName, name)))
     .returning({ id: pantryItems.id });
 
   return htmlPage(

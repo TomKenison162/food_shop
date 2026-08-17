@@ -2,6 +2,7 @@ import { and, desc, eq, gt, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { db } from "../db/client";
 import { meals, mealIngredients, mlModel, mealHistory, mealOffers, pantryItems } from "../db/schema";
 import { isDeclineReason, isPreferenceSignal } from "../declineReasons";
+import { requireUserId } from "../userGuard";
 import { dishFeatures } from "./dishFeatures";
 import { buildFeatureVector, FEATURE_NAMES, type FeatureContext, type MealFeatureExtras } from "./features";
 import { trainXGBoost, scoreWithXGBoost } from "./xgboostModel";
@@ -54,7 +55,8 @@ export interface TrainingSet {
  * never recomputed: pantry state, recency and weather all drift, and weather
  * can't be re-fetched for a past date.
  */
-export async function buildTrainingSet(): Promise<TrainingSet> {
+export async function buildTrainingSet(userId: number): Promise<TrainingSet> {
+  requireUserId(userId, "buildTrainingSet");
   const X: number[][] = [];
   const y: number[] = [];
 
@@ -107,7 +109,7 @@ export async function buildTrainingSet(): Promise<TrainingSet> {
     .select({ offer: mealOffers, meal: meals })
     .from(mealOffers)
     .innerJoin(meals, eq(mealOffers.mealId, meals.id))
-    .where(isNotNull(mealOffers.resolvedAt));
+    .where(and(eq(mealOffers.userId, userId), isNotNull(mealOffers.resolvedAt)));
 
   for (const { offer, meal } of offerRows) {
     X.push(toVector(offer, meal));
@@ -118,7 +120,7 @@ export async function buildTrainingSet(): Promise<TrainingSet> {
     .select({ history: mealHistory, meal: meals })
     .from(mealHistory)
     .innerJoin(meals, eq(mealHistory.mealId, meals.id))
-    .where(isNotNull(mealHistory.accepted));
+    .where(and(eq(mealHistory.userId, userId), isNotNull(mealHistory.accepted)));
 
   let excludedNotHome = 0;
   let excludedAmbivalent = 0;
@@ -167,8 +169,9 @@ export async function buildTrainingSet(): Promise<TrainingSet> {
  * the old one — a single evening's reply now labels three meals instead of
  * one, so the gate clears in days rather than weeks.
  */
-export async function trainModel(): Promise<TrainResult> {
-  const { X, y, fromOffers, fromReplies, excludedNotHome, excludedAmbivalent } = await buildTrainingSet();
+export async function trainModel(userId: number): Promise<TrainResult> {
+  requireUserId(userId, "trainModel");
+  const { X, y, fromOffers, fromReplies, excludedNotHome, excludedAmbivalent } = await buildTrainingSet(userId);
 
   const positives = y.filter((v) => v === 1).length;
   const negatives = y.length - positives;
@@ -190,7 +193,7 @@ export async function trainModel(): Promise<TrainResult> {
   // fallback: it adds confident noise on top of rules that already work.
   const evaluation = await leaveOneOutEvaluate(X, y);
   if (!evaluation.beatsBaseline) {
-    await db.delete(mlModel);
+    await db.delete(mlModel).where(eq(mlModel.userId, userId));
     return {
       trained: false,
       reason:
@@ -205,8 +208,9 @@ export async function trainModel(): Promise<TrainResult> {
 
   const modelBuffer = await trainXGBoost(X, y);
 
-  await db.delete(mlModel);
+  await db.delete(mlModel).where(eq(mlModel.userId, userId));
   await db.insert(mlModel).values({
+    userId,
     featureNames: FEATURE_NAMES,
     modelDataBase64: Buffer.from(modelBuffer).toString("base64"),
     sampleCount: y.length,
@@ -222,8 +226,11 @@ export async function trainModel(): Promise<TrainResult> {
   };
 }
 
-async function getLatestModelBuffer(): Promise<Uint8Array | null> {
-  const row = await db.query.mlModel.findFirst({ orderBy: desc(mlModel.trainedAt) });
+async function getLatestModelBuffer(userId: number): Promise<Uint8Array | null> {
+  const row = await db.query.mlModel.findFirst({
+    where: eq(mlModel.userId, requireUserId(userId, "getLatestModelBuffer")),
+    orderBy: desc(mlModel.trainedAt),
+  });
   if (!row) return null;
   return new Uint8Array(Buffer.from(row.modelDataBase64, "base64"));
 }
@@ -241,17 +248,19 @@ async function getLatestModelBuffer(): Promise<Uint8Array | null> {
  * random pick among the rule-filtered survivors.
  */
 export async function scoreMealsForTonight(
+  userId: number,
   candidates: MealRecord[],
   ctx: FeatureContext
 ): Promise<number[] | null> {
-  const modelBuffer = await getLatestModelBuffer();
+  requireUserId(userId, "scoreMealsForTonight");
+  const modelBuffer = await getLatestModelBuffer(userId);
   if (!modelBuffer || candidates.length === 0) return null;
 
   const today = londonDateString();
   const mealIds = candidates.map((m) => m.id);
 
   const [pantry, ingredientRows, historyRows] = await Promise.all([
-    db.select().from(pantryItems).where(gt(pantryItems.gramsRemaining, "0")),
+    db.select().from(pantryItems).where(and(eq(pantryItems.userId, userId), gt(pantryItems.gramsRemaining, "0"))),
     db.select().from(mealIngredients).where(inArray(mealIngredients.mealId, mealIds)),
     db
       .select({
@@ -260,7 +269,7 @@ export async function scoreMealsForTonight(
         servedDate: mealHistory.servedDate,
       })
       .from(mealHistory)
-      .where(and(lt(mealHistory.servedDate, today), isNull(mealHistory.supersededAt))),
+      .where(and(eq(mealHistory.userId, userId), lt(mealHistory.servedDate, today), isNull(mealHistory.supersededAt))),
   ]);
 
   const pantryByName = new Map(pantry.map((p) => [p.genericName, Number(p.gramsRemaining)]));

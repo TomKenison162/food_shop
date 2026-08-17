@@ -10,6 +10,12 @@ import type { DeclineReason } from "./declineReasons";
 export type FeedbackAction = "accept" | "choose" | "decline";
 
 export interface FeedbackLinkParams {
+  /**
+   * Inside the signature, not merely alongside it. A link that only named
+   * the meal and date would be replayable against another household member,
+   * letting one person's tap label someone else's dinner.
+   */
+  userId: number;
   mealId: number;
   date: string; // YYYY-MM-DD
   action: FeedbackAction;
@@ -31,7 +37,7 @@ function secret(): string {
  * quietly rewrite a training label.
  */
 function canonicalString(p: FeedbackLinkParams): string {
-  return [p.mealId, p.date, p.action, p.reason ?? "", p.rating ?? ""].join("|");
+  return [p.userId, p.mealId, p.date, p.action, p.reason ?? "", p.rating ?? ""].join("|");
 }
 
 function sign(p: FeedbackLinkParams): string {
@@ -46,6 +52,7 @@ function sign(p: FeedbackLinkParams): string {
  */
 export function buildFeedbackLink(appUrl: string, p: FeedbackLinkParams): string {
   const params = new URLSearchParams({
+    user: String(p.userId),
     mealId: String(p.mealId),
     date: p.date,
     action: p.action,

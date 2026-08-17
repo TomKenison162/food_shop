@@ -42,18 +42,18 @@ function esc(s: string): string {
 }
 
 /** What's currently planned for `date`, for pages that need to say so. */
-async function livePlanName(date: string): Promise<string | null> {
-  const plan = await getPlannedMeal(date);
+async function livePlanName(userId: number, date: string): Promise<string | null> {
+  const plan = await getPlannedMeal(userId, date);
   if (!plan) return null;
   const meal = await db.query.meals.findFirst({ where: eq(meals.id, plan.mealId) });
   return meal?.name ?? null;
 }
 
 /** Emails the full detail for a newly-committed plan and stamps it as sent. */
-async function emailPlan(result: RotationResult, date: string): Promise<string | null> {
-  const sent = await sendDinnerReminder(result);
+async function emailPlan(userId: number, result: RotationResult, date: string): Promise<string | null> {
+  const sent = await sendDinnerReminder(userId, result);
   if (!sent.sent) return sent.reason ?? "unknown reason";
-  const fresh = await getPlannedMeal(date);
+  const fresh = await getPlannedMeal(userId, date);
   if (fresh) {
     await db.update(mealHistory).set({ emailedAt: new Date() }).where(eq(mealHistory.id, fresh.id));
   }
@@ -85,6 +85,7 @@ async function emailPlan(result: RotationResult, date: string): Promise<string |
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
+  const userId = Number(sp.get("user"));
   const mealId = Number(sp.get("mealId"));
   const date = sp.get("date") ?? "";
   const action = (sp.get("action") ?? "") as FeedbackAction;
@@ -92,6 +93,9 @@ export async function GET(req: NextRequest) {
   const rawRating = sp.get("rating");
   const sig = sp.get("sig") ?? "";
 
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return htmlPage("<p>That link is missing its user.</p>");
+  }
   if (!Number.isInteger(mealId) || !date || !["accept", "choose", "decline"].includes(action)) {
     return htmlPage("<p>That link looks malformed.</p>");
   }
@@ -105,12 +109,12 @@ export async function GET(req: NextRequest) {
   if (rawRating !== null && rating === null) {
     return htmlPage("<p>That link looks malformed.</p>");
   }
-  if (!verifyFeedbackLink({ mealId, date, action, reason, rating }, sig)) {
+  if (!verifyFeedbackLink({ userId, mealId, date, action, reason, rating }, sig)) {
     return htmlPage("<p>That link isn't valid.</p>");
   }
 
-  const offerGroup = await offerGroupFor(date, mealId);
-  const live = await getPlannedMeal(date);
+  const offerGroup = await offerGroupFor(userId, date, mealId);
+  const live = await getPlannedMeal(userId, date);
 
   // Wide capture, never trained on. Reply latency in particular cannot be
   // reconstructed afterwards, and a reply two minutes after the email
@@ -118,8 +122,9 @@ export async function GET(req: NextRequest) {
   // Best-effort, and deliberately not awaited. This route already runs a
   // full re-plan on a decline, and everything optional added to it is time
   // spent on a loading spinner — the route has timed out here before.
-  const offered = offerGroup ? await offerContext(offerGroup, mealId) : null;
+  const offered = offerGroup ? await offerContext(userId, offerGroup, mealId) : null;
   void logFeedbackEvent({
+    userId,
     offerGroup,
     servedDate: date,
     mealId,
@@ -137,12 +142,12 @@ export async function GET(req: NextRequest) {
     if (live?.mealId === mealId) {
       return htmlPage(`<h1>Already set.</h1><p>That's tonight's plan already.</p>`);
     }
-    if (offerGroup) await resolveOffer(offerGroup, mealId);
+    if (offerGroup) await resolveOffer(userId, offerGroup, mealId);
 
-    const result = await setPlanForDate(date, mealId);
+    const result = await setPlanForDate(userId, date, mealId);
     if (!result) return htmlPage("<p>That meal isn't available any more.</p>");
 
-    const failure = await emailPlan(result, date);
+    const failure = await emailPlan(userId, result, date);
     return htmlPage(
       failure
         ? `<h1>${esc(result.meal.name)}</h1><p>Set as tonight's dinner, but the email didn't go out: ${esc(failure)}</p>`
@@ -153,6 +158,7 @@ export async function GET(req: NextRequest) {
   // --- accept / decline both label the live plan row -----------------------
   const row = await db.query.mealHistory.findFirst({
     where: and(
+      eq(mealHistory.userId, userId),
       eq(mealHistory.servedDate, date),
       eq(mealHistory.mealId, mealId),
       isNull(mealHistory.supersededAt)
@@ -163,7 +169,7 @@ export async function GET(req: NextRequest) {
   // impatiently, or days later. Say what's actually planned rather than
   // dead-ending on a spent link.
   if (!row || row.accepted !== null) {
-    const current = await livePlanName(date);
+    const current = await livePlanName(userId, date);
     return htmlPage(
       `<h1>${!row ? "Already replaced." : "Already recorded."}</h1>` +
         (current
@@ -177,9 +183,9 @@ export async function GET(req: NextRequest) {
       .update(mealHistory)
       .set({ accepted: true, rating, respondedAt: new Date() })
       .where(eq(mealHistory.id, row.id));
-    if (offerGroup) await resolveOffer(offerGroup, mealId);
+    if (offerGroup) await resolveOffer(userId, offerGroup, mealId);
     // The one point at which the app knows real food was bought and cooked.
-    await recordMealCooked(mealId);
+    await recordMealCooked(userId, mealId);
     const note =
       rating === null ? "Noted."
       : rating >= 4 ? "Noted, one to repeat."
@@ -193,7 +199,7 @@ export async function GET(req: NextRequest) {
     .update(mealHistory)
     .set({ accepted: false, declineReason: reason, respondedAt: new Date() })
     .where(eq(mealHistory.id, row.id));
-  if (offerGroup) await resolveOfferAsDeclined(offerGroup);
+  if (offerGroup) await resolveOfferAsDeclined(userId, offerGroup);
 
   // Some declines settle dinner rather than reject the dish. Suggesting an
   // alternative to someone who is out, or who is about to eat yesterday's
@@ -212,7 +218,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const replacement = await replacePlanForDate(date);
+  const replacement = await replacePlanForDate(userId, date);
   if (!replacement) {
     return htmlPage(
       `<h1>Noted: ${esc(DECLINE_LABELS[reason!].toLowerCase())}.</h1>
@@ -220,7 +226,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const failure = await emailPlan(replacement, date);
+  const failure = await emailPlan(userId, replacement, date);
   return htmlPage(
     failure
       ? `<h1>${esc(replacement.meal.name)}</h1><p>That's your new suggestion, but the email didn't go out: ${esc(failure)}</p>`

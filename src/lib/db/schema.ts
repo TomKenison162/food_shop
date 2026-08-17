@@ -10,6 +10,7 @@ import {
   varchar,
   pgEnum,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const tierEnum = pgEnum("tier", ["budget", "standard", "gourmet"]);
@@ -83,9 +84,51 @@ export const mealIngredients = pgTable("meal_ingredients", {
   isEstimated: boolean("is_estimated").notNull().default(false),
 });
 
-/** The single user's swiped-right queue. */
+/**
+ * A person the app cooks for.
+ *
+ * The recipe catalogue (meals, mealIngredients) is deliberately NOT
+ * per-user: it is the expensive, hard-won part — 137 dishes and 615 priced
+ * ingredient lines with all the cut-matching behind them — and it is the
+ * same food whoever is eating it. Everything that expresses a *preference*
+ * or a *history* is per-user instead.
+ *
+ * Settings live here rather than in a separate table because there is
+ * nothing left to say about a user beyond who they are and how they like
+ * their reminders.
+ */
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 100 }).notNull(),
+  /** Where this person's reminder is sent. */
+  email: varchar("email", { length: 200 }).notNull().unique(),
+  portions: integer("portions").notNull().default(2),
+  /**
+   * Inclusive YYYY-MM-DD through which reminders are suspended (holidays).
+   * Without this, a week away produces a run of "No" replies that mean "I'm
+   * not home" rather than "I dislike this".
+   */
+  pausedUntil: varchar("paused_until", { length: 10 }),
+  /** Reminders stop entirely when false, without deleting any history. */
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Every per-user table carries this. Deliberately NOT NULL with no default:
+ * a default would let a query that forgot the user silently write into
+ * user 1's data, which is the exact failure this design has to make
+ * impossible. Without a default, the database rejects the insert instead.
+ */
+const userIdColumn = () =>
+  integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" });
+
+/** A user's swiped-right queue. */
 export const approvedQueue = pgTable("approved_queue", {
   id: serial("id").primaryKey(),
+  userId: userIdColumn(),
   mealId: integer("meal_id")
     .notNull()
     .references(() => meals.id, { onDelete: "cascade" }),
@@ -111,6 +154,7 @@ export const mealHistory = pgTable(
   "meal_history",
   {
     id: serial("id").primaryKey(),
+    userId: userIdColumn(),
     mealId: integer("meal_id")
       .notNull()
       .references(() => meals.id, { onDelete: "cascade" }),
@@ -195,6 +239,7 @@ export const mealOffers = pgTable(
   "meal_offers",
   {
     id: serial("id").primaryKey(),
+    userId: userIdColumn(),
     mealId: integer("meal_id")
       .notNull()
       .references(() => meals.id, { onDelete: "cascade" }),
@@ -259,13 +304,18 @@ export const userSettings = pgTable("user_settings", {
  */
 export const pantryItems = pgTable("pantry_items", {
   id: serial("id").primaryKey(),
-  genericName: varchar("generic_name", { length: 200 }).notNull().unique(),
+  userId: userIdColumn(),
+  genericName: varchar("generic_name", { length: 200 }).notNull(),
   gramsRemaining: numeric("grams_remaining", { precision: 8, scale: 1 }).notNull(),
   sourceMealId: integer("source_meal_id").references(() => meals.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   /** YYYY-MM-DD after which this stock is treated as gone. */
   expiresOn: varchar("expires_on", { length: 10 }),
-});
+}, (t) => ({
+  // One row per ingredient per person. Previously globally unique, which
+  // would have made two users share a single jar of cumin.
+  userIngredientIdx: uniqueIndex("pantry_user_ingredient_idx").on(t.userId, t.genericName),
+}));
 
 /**
  * Append-only record of everything known at the moment a decision was made,
@@ -286,6 +336,7 @@ export const eventLog = pgTable(
   "event_log",
   {
     id: serial("id").primaryKey(),
+    userId: userIdColumn(),
     /** "plan" when a dinner was chosen, "feedback" when one was answered. */
     kind: varchar("kind", { length: 20 }).notNull(),
     /** Ties a feedback event back to the plan that produced it. */
@@ -310,6 +361,7 @@ export const eventLog = pgTable(
  */
 export const mlModel = pgTable("ml_model", {
   id: serial("id").primaryKey(),
+  userId: userIdColumn(),
   featureNames: text("feature_names").array().notNull(),
   modelDataBase64: text("model_data_base64").notNull(),
   sampleCount: integer("sample_count").notNull(),

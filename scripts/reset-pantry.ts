@@ -2,6 +2,7 @@ import "dotenv/config";
 import { db } from "../src/lib/db/client";
 import { pantryItems } from "../src/lib/db/schema";
 import { getPantrySummary } from "../src/lib/pantry/pantry";
+import { activeUsers } from "../src/lib/users";
 
 /**
  * Empties the pantry.
@@ -16,7 +17,10 @@ import { getPantrySummary } from "../src/lib/pantry/pantry";
  * nothing else references these rows.
  */
 async function main() {
-  const before = await getPantrySummary();
+  // Every user's pantry, since this is a maintenance script rather than
+  // something acting on one person's behalf.
+  const users = await activeUsers();
+  const before = (await Promise.all(users.map((u) => getPantrySummary(u.id)))).flat();
   if (before.length === 0) {
     console.log("Pantry is already empty.");
   } else {

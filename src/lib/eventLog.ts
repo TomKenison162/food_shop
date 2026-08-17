@@ -1,4 +1,4 @@
-import { desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "./db/client";
 import { eventLog, mealHistory, mealIngredients, pantryItems } from "./db/schema";
 import { addDaysToDateString, londonDateString } from "./date";
@@ -33,6 +33,7 @@ async function write(row: typeof eventLog.$inferInsert): Promise<void> {
 }
 
 export interface PlanEventInput {
+  userId: number;
   offerGroup: string;
   servedDate: string;
   portions: 1 | 2;
@@ -71,7 +72,7 @@ export async function logPlanEvent(input: PlanEventInput): Promise<void> {
 
   try {
     const [pantry, recent, allIngredients] = await Promise.all([
-      db.select().from(pantryItems),
+      db.select().from(pantryItems).where(eq(pantryItems.userId, input.userId)),
       db
         .select({
           servedDate: mealHistory.servedDate,
@@ -81,7 +82,7 @@ export async function logPlanEvent(input: PlanEventInput): Promise<void> {
           declineReason: mealHistory.declineReason,
         })
         .from(mealHistory)
-        .where(gte(mealHistory.servedDate, addDaysToDateString(input.servedDate, -28)))
+        .where(and(eq(mealHistory.userId, input.userId), gte(mealHistory.servedDate, addDaysToDateString(input.servedDate, -28))))
         .orderBy(desc(mealHistory.servedDate)),
       // Scoped to the candidates rather than the whole table. The daily run
       // already does real work under a timeout; a full ingredient scan just
@@ -135,6 +136,7 @@ export async function logPlanEvent(input: PlanEventInput): Promise<void> {
     };
 
     await write({
+      userId: input.userId,
       kind: "plan",
       offerGroup: input.offerGroup,
       servedDate: input.servedDate,
@@ -178,6 +180,7 @@ export async function logPlanEvent(input: PlanEventInput): Promise<void> {
 }
 
 export interface FeedbackEventInput {
+  userId: number;
   offerGroup: string | null;
   servedDate: string;
   mealId: number;
@@ -206,6 +209,7 @@ export async function logFeedbackEvent(input: FeedbackEventInput): Promise<void>
     input.emailedAt !== null ? Math.round((now.getTime() - input.emailedAt.getTime()) / 1000) : null;
 
   await write({
+    userId: input.userId,
     kind: "feedback",
     offerGroup: input.offerGroup,
     servedDate: input.servedDate,
@@ -226,11 +230,11 @@ export async function logFeedbackEvent(input: FeedbackEventInput): Promise<void>
 }
 
 /** Counts by kind, for the cron response so the log is visibly alive. */
-export async function eventLogSummary(): Promise<{ plan: number; feedback: number }> {
+export async function eventLogSummary(userId: number): Promise<{ plan: number; feedback: number }> {
   try {
     const [plans, feedback] = await Promise.all([
-      db.select({ id: eventLog.id }).from(eventLog).where(eq(eventLog.kind, "plan")),
-      db.select({ id: eventLog.id }).from(eventLog).where(eq(eventLog.kind, "feedback")),
+      db.select({ id: eventLog.id }).from(eventLog).where(and(eq(eventLog.userId, userId), eq(eventLog.kind, "plan"))),
+      db.select({ id: eventLog.id }).from(eventLog).where(and(eq(eventLog.userId, userId), eq(eventLog.kind, "feedback"))),
     ]);
     return { plan: plans.length, feedback: feedback.length };
   } catch {
