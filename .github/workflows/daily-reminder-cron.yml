@@ -14,6 +14,10 @@ on:
         description: "Send now, ignoring the 17:00 window (for testing)"
         type: boolean
         default: false
+      user:
+        description: "Only this user id (blank = every active user, since this is a deliberate manual run)"
+        type: string
+        default: ""
 
 jobs:
   daily-reminder:
@@ -24,6 +28,7 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           FORCE: ${{ inputs.force }}
+          TARGET_USER: ${{ inputs.user }}
         run: |
           set -euo pipefail
 
@@ -38,8 +43,19 @@ jobs:
 
           url="${APP_URL}/api/cron/daily-reminder"
           if [ "${FORCE:-false}" = "true" ]; then
-            url="${url}?force=1"
-            echo "Forcing a send, ignoring the 17:00 Europe/London window."
+            # force=1 also bypasses the already-emailed guard, so the route
+            # requires an explicit target: a specific user, or an explicit
+            # "everyone". Left blank here it means everyone, on purpose —
+            # a manual dispatch from the Actions tab is already a conscious
+            # human decision, unlike an ad hoc curl someone might run while
+            # only meaning to test their own reminder.
+            if [ -n "${TARGET_USER:-}" ]; then
+              url="${url}?force=1&user=${TARGET_USER}"
+              echo "Forcing a send for user ${TARGET_USER}, ignoring the 17:00 Europe/London window."
+            else
+              url="${url}?force=1&all=1"
+              echo "Forcing a send for every active user, ignoring the 17:00 Europe/London window."
+            fi
           fi
 
           # Printed unconditionally so a failed run can never again be a

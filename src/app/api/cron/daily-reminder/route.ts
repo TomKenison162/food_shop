@@ -45,6 +45,26 @@ export async function GET(req: NextRequest) {
   const today = londonDateString();
   const hour = londonHour();
   const onlyUser = req.nextUrl.searchParams.get("user");
+  const allUsers = req.nextUrl.searchParams.get("all") === "1";
+
+  // A forced run is, in practice, always someone testing or re-sending their
+  // OWN reminder — but force also bypasses the already-emailed guard, so
+  // without this a bare "?force=1" quietly re-sent to every active user at
+  // once. One person resending their own dinner should never re-trigger
+  // someone else's. The unforced scheduled poll is unaffected: it still
+  // loops everyone, safely, because the already-emailed guard is what makes
+  // that safe in the first place.
+  if (force && !onlyUser && !allUsers) {
+    return NextResponse.json(
+      {
+        error:
+          "?force=1 requires either ?user=<id> (resend for one person) or ?all=1 " +
+          "(explicitly resend for everyone). This prevents one person's resend " +
+          "from silently re-sending everyone else's too.",
+      },
+      { status: 400 }
+    );
+  }
 
   try {
     // Everyone gets their own pass. One person's failure must never cost

@@ -140,7 +140,11 @@ export async function GET(req: NextRequest) {
   // --- an alternative was preferred ---------------------------------------
   if (action === "choose") {
     if (live?.mealId === mealId) {
-      return htmlPage(`<h1>Already set.</h1><p>That's tonight's plan already.</p>`);
+      // Neutral wording deliberately: this fires just as often for "clicked
+      // twice" as for "someone else already actioned this", and the second
+      // case is not a mistake worth flagging — it's two people sharing an
+      // inbox, and the plan is exactly what was asked for either way.
+      return htmlPage(`<h1>Noted, thanks.</h1><p>That's tonight's plan.</p>`);
     }
     if (offerGroup) await resolveOffer(userId, offerGroup, mealId);
 
@@ -166,12 +170,17 @@ export async function GET(req: NextRequest) {
   });
 
   // Emails don't expire, so the same link gets clicked twice often —
-  // impatiently, or days later. Say what's actually planned rather than
-  // dead-ending on a spent link.
+  // impatiently, or days later. Previously headed "Already replaced" /
+  // "Already recorded", which reads as an error even when nothing went
+  // wrong: the same page shows for a genuine double-click, for a stale
+  // link opened days later, and for a reply that arrived seconds behind
+  // someone else's — none of which is a failure worth alarming over. One
+  // neutral heading either way; say what's actually planned rather than
+  // imply the click was wasted.
   if (!row || row.accepted !== null) {
     const current = await livePlanName(userId, date);
     return htmlPage(
-      `<h1>${!row ? "Already replaced." : "Already recorded."}</h1>` +
+      `<h1>Noted, thanks.</h1>` +
         (current
           ? `<p>Tonight's plan is <strong>${esc(current)}</strong>. The full email is in your inbox.</p>`
           : `<p>There's no dinner planned for ${esc(date)} right now.</p>`)

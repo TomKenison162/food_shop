@@ -62,9 +62,9 @@ export async function GET(req: NextRequest) {
     .where(and(eq(pantryItems.userId, userId), eq(pantryItems.genericName, name)))
     .returning({ id: pantryItems.id });
 
+  // Same page either way — whether this was the first click or a repeat,
+  // "not got it" is now true, which is all the click is meant to confirm.
   return htmlPage(
-    removed.length > 0
-      ? `<h1>Noted.</h1><p><strong>${esc(name)}</strong> is off the list, so it'll be on your next shop instead of being skipped.</p>`
-      : `<h1>Already gone.</h1><p><strong>${esc(name)}</strong> wasn't being counted anyway.</p>`
+    `<h1>Noted, thanks.</h1><p><strong>${esc(name)}</strong> won't be counted as something you have in.</p>`
   );
 }
