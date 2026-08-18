@@ -6,7 +6,7 @@ import { approvedQueue, mealRejections } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
 
-/** Undo a swipe-left. Clears the soft-delete marker so the meal returns to the deck. */
+/** Undo a swipe-left: removes this user's rejection row so the meal returns to their deck. */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const userId = requireUserParam(req);
   const mealId = Number(params.id);

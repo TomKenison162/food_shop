@@ -7,10 +7,10 @@ import { approvedQueue, mealRejections } from "@/lib/db/schema";
 export const dynamic = "force-dynamic";
 
 /**
- * Swipe-left is a soft delete: the row (and its ingredients, and any
- * history referencing it) is kept, just marked deletedAt and filtered out
- * of the deck. A misswipe used to destroy a dish permanently — now it can
- * be undone via /api/meals/[id]/restore.
+ * Swipe-left, recorded per user in `meal_rejections` rather than as a flag
+ * on the shared `meals` row — a global soft-delete would let one household
+ * member's left-swipe remove a dish from everyone else's deck too. Undoable
+ * via /api/meals/[id]/restore.
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const userId = requireUserParam(req);

@@ -32,6 +32,9 @@ export async function GET(req: NextRequest) {
 
   const conditions = [isNull(meals.deletedAt)];
   if (approvedIds.length > 0) conditions.push(notInArray(meals.id, approvedIds));
+  // rejectedIds was being fetched and then silently dropped here — every
+  // previously-rejected meal kept reappearing in the deck on every load.
+  if (rejectedIds.length > 0) conditions.push(notInArray(meals.id, rejectedIds));
   if (tier === "budget" || tier === "standard" || tier === "gourmet") {
     conditions.push(eq(meals.tier, tier));
   }

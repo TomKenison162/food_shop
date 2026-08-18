@@ -30,7 +30,7 @@ export async function spentInWeek(
     .from(mealHistory)
     .where(
       and(
-      eq(mealHistory.userId, requireUserId(userId, "spentInWeek")),
+        eq(mealHistory.userId, requireUserId(userId, "spentInWeek")),
         gte(mealHistory.servedDate, weekStart),
         lt(mealHistory.servedDate, today),
         isNull(mealHistory.supersededAt)

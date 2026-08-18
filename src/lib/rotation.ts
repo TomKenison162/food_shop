@@ -227,7 +227,7 @@ export async function planMealForDate(
     weeklyBudgetGBP: WEEKLY_BUDGET_GBP,
     yesterdaysProtein: yesterday?.primaryProtein ?? null,
     diagnostics: decision.diagnostics,
-    modelInfo: await currentModelInfo(),
+    modelInfo: await currentModelInfo(userId),
     now,
   });
 
@@ -552,10 +552,22 @@ export async function offerContext(
   return { position, count: rows.length };
 }
 
-/** Which model produced tonight's scores, for the log. Null when untrained. */
-async function currentModelInfo(): Promise<unknown> {
+/**
+ * Which model produced tonight's scores, for the log. Null when untrained.
+ *
+ * Had no `where` clause at all until caught by an audit: it returned
+ * whichever user's model was trained most recently across the whole table,
+ * so one person's event log could record another person's model stats
+ * against their own plan (right dinner, wrong attribution) — silent, and
+ * exactly the kind of leak that's hard to notice because it never breaks
+ * anything visible, only corrupts data meant for later analysis.
+ */
+async function currentModelInfo(userId: number): Promise<unknown> {
   try {
-    const row = await db.query.mlModel.findFirst({ orderBy: desc(mlModel.trainedAt) });
+    const row = await db.query.mlModel.findFirst({
+      where: eq(mlModel.userId, userId),
+      orderBy: desc(mlModel.trainedAt),
+    });
     if (!row) return null;
     return {
       trainedAt: row.trainedAt,
@@ -628,44 +640,15 @@ async function approvedMealRecords(userId: number): Promise<MealRecord[]> {
   return [...seen.values()];
 }
 
-async function countIngredients(mealId: number): Promise<number> {
-  const rows = await db.query.mealIngredients.findMany({ where: eq(mealIngredients.mealId, mealId) });
-  return rows.length;
-}
-
-export async function daysSinceLastServed(userId: number, mealId: number, asOfDate: string): Promise<number | null> {
-  const rows = await db
-    .select({ servedDate: mealHistory.servedDate })
-    .from(mealHistory)
-    .where(
-      and(
-        eq(mealHistory.mealId, mealId),
-        sql`${mealHistory.servedDate} < ${asOfDate}`,
-        isNull(mealHistory.supersededAt)
-      )
-    );
-  return mostRecentGap(rows.map((r) => r.servedDate), asOfDate);
-}
-
-export async function proteinDaysSinceLastServed(
-  protein: string,
-  asOfDate: string
-): Promise<number | null> {
-  const rows = await db
-    .select({ servedDate: mealHistory.servedDate })
-    .from(mealHistory)
-    .where(
-      and(
-        eq(mealHistory.primaryProtein, protein),
-        sql`${mealHistory.servedDate} < ${asOfDate}`,
-        isNull(mealHistory.supersededAt)
-      )
-    );
-  return mostRecentGap(rows.map((r) => r.servedDate), asOfDate);
-}
-
-function mostRecentGap(dates: string[], asOfDate: string): number | null {
-  if (dates.length === 0) return null;
-  const mostRecent = dates.reduce((a, b) => (a > b ? a : b));
-  return Math.round((Date.parse(asOfDate) - Date.parse(mostRecent)) / (1000 * 60 * 60 * 24));
-}
+// countIngredients / daysSinceLastServed / proteinDaysSinceLastServed used to
+// live here as standalone per-meal queries. They were superseded by
+// snapshotMeals (which computes the same things for a whole slate in three
+// batched queries instead of four round trips per meal — see its docstring)
+// and left in place, unused, when that landed.
+//
+// Removed rather than kept as dead code: daysSinceLastServed took a userId
+// parameter and silently ignored it, and proteinDaysSinceLastServed didn't
+// accept one at all — both would have leaked one user's serving history into
+// another's recency calculations the moment anything called them again. A
+// scoped-looking function that isn't actually scoped is worse than no
+// function at all.

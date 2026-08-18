@@ -108,10 +108,22 @@ export function explainPick(input: ExplainInput): string {
   if (input.relaxedProteinRule) caveats.push("it repeats yesterday's protein because nothing else avoided it");
   if (input.relaxedRepeatRule) caveats.push("your queue is getting repetitive");
 
+  // Without a trained model, selection is a uniform random draw from the
+  // rule-filtered pool — none of `reasons` above influenced it, since every
+  // one of them (pantry overlap, weather, protein gaps, day/effort fit) is
+  // purely an ML feature, never a selection rule. Phrasing them as "Picked
+  // because..." here would present coincidence as cause, which is precisely
+  // the failure this function exists to make visible, not commit. The rule
+  // relaxations in `caveats` are the one exception: those are genuinely
+  // causal regardless of whether a model exists, so they still get said.
+  if (!input.usedModel) {
+    const trivia = reasons.length > 0 ? ` For what it's worth: ${list(reasons.slice(0, 2))}.` : "";
+    const tail = caveats.length > 0 ? ` Worth knowing: ${list(caveats)}.` : "";
+    return `Random pick from tonight's queue — no trained model yet.${trivia}${tail}`;
+  }
+
   if (reasons.length === 0 && caveats.length === 0) {
-    return input.usedModel
-      ? "No strong reason: the model rates it about as well as everything else tonight."
-      : "Picked at random from what tonight's rules allow.";
+    return "No strong reason: the model rates it about as well as everything else tonight.";
   }
 
   const head = reasons.length > 0 ? `Picked because ${list(reasons.slice(0, 3))}.` : "";
