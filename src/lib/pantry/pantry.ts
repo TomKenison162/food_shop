@@ -1,6 +1,6 @@
 import { and, eq, gt, gte, inArray, lt, or, isNull } from "drizzle-orm";
 import { db } from "../db/client";
-import { pantryItems, mealIngredients } from "../db/schema";
+import { pantryItems, mealIngredients, approvedQueue, meals } from "../db/schema";
 import { parseQuantityToGrams } from "../pricing/quantity";
 import { shelfLifeDays } from "./shelfLife";
 import { addDaysToDateString, londonDateString } from "../date";
@@ -197,6 +197,100 @@ export async function expiringOverlapByMeal(
       entry.grams += grams;
     }
     out.set(line.mealId, entry);
+  }
+  return out;
+}
+
+/**
+ * A pantry item counts as "niche" once at most this many approved meals use
+ * it. At 1, an item bought for one specific dish (tahini for a hummus, say)
+ * has exactly one route back out of the pantry — nothing else in the queue
+ * will ever touch it, so unlike a staple it can't be quietly used up by
+ * whatever gets cooked next.
+ */
+export const NICHE_MAX_MEALS = 1;
+
+export interface NicheItem {
+  genericName: string;
+  gramsRemaining: number;
+  /** The only approved meal(s) standing between this stock and going to waste. */
+  onlyUsedBy: { mealId: number; mealName: string }[];
+}
+
+/**
+ * Pantry stock this user holds that only a handful of their own approved
+ * meals can ever consume.
+ *
+ * This exists because EXPIRING_SOON_DAYS-based use-it-up only notices a
+ * niche ingredient a few days before it's already too late — tahini bought
+ * for one dish can sit for months looking perfectly fine, then expire having
+ * never been mentioned once. Niche-ness is a waste risk independent of the
+ * expiry date: if nothing else will ever use it, the one dish that can is
+ * worth surfacing long before the calendar forces the issue.
+ */
+export async function nicheItems(userId: number, today = londonDateString()): Promise<NicheItem[]> {
+  requireUserId(userId, "nicheItems");
+  const stock = await db
+    .select()
+    .from(pantryItems)
+    .where(and(eq(pantryItems.userId, userId), gt(pantryItems.gramsRemaining, "0"), notExpired(today)));
+  if (stock.length === 0) return [];
+
+  const names = stock.map((s) => s.genericName);
+  const rows = await db
+    .select({ genericName: mealIngredients.genericName, mealId: meals.id, mealName: meals.name })
+    .from(approvedQueue)
+    .innerJoin(meals, eq(approvedQueue.mealId, meals.id))
+    .innerJoin(mealIngredients, eq(mealIngredients.mealId, meals.id))
+    .where(and(eq(approvedQueue.userId, userId), inArray(mealIngredients.genericName, names)));
+
+  const usersByName = new Map<string, Map<number, string>>();
+  for (const r of rows) {
+    const byMeal = usersByName.get(r.genericName) ?? new Map<number, string>();
+    byMeal.set(r.mealId, r.mealName);
+    usersByName.set(r.genericName, byMeal);
+  }
+
+  const out: NicheItem[] = [];
+  for (const s of stock) {
+    const byMeal = usersByName.get(s.genericName);
+    // Nothing approved uses it at all is a different, worse problem (dead
+    // stock with no route out whatsoever) — still surfaced here rather than
+    // silently dropped, just with an empty onlyUsedBy the caller can render
+    // as "nothing in your queue uses this any more".
+    const count = byMeal?.size ?? 0;
+    if (count > NICHE_MAX_MEALS) continue;
+    out.push({
+      genericName: s.genericName,
+      gramsRemaining: Number(s.gramsRemaining),
+      onlyUsedBy: byMeal ? [...byMeal.entries()].map(([mealId, mealName]) => ({ mealId, mealName })) : [],
+    });
+  }
+  return out;
+}
+
+/**
+ * Niche pantry stock, grouped by the meal that can clear it — same shape as
+ * expiringOverlapByMeal so the two can be merged into one use-it-up pool.
+ * Items with no approved meal left at all contribute nothing here (there is
+ * no meal to route the grams to); they still appear in nicheItems() for the
+ * email note.
+ */
+export async function nicheOverlapByMeal(
+  userId: number,
+  today = londonDateString()
+): Promise<Map<number, { grams: number; names: string[] }>> {
+  const items = await nicheItems(userId, today);
+  const out = new Map<number, { grams: number; names: string[] }>();
+  for (const item of items) {
+    for (const { mealId } of item.onlyUsedBy) {
+      const entry = out.get(mealId) ?? { grams: 0, names: [] };
+      if (!entry.names.includes(item.genericName)) {
+        entry.names.push(item.genericName);
+        entry.grams += item.gramsRemaining;
+      }
+      out.set(mealId, entry);
+    }
   }
   return out;
 }

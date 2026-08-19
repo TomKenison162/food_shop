@@ -7,7 +7,7 @@ function input(over: Partial<ExplainInput> = {}): ExplainInput {
     dish: { effortMinutes: 40, richness: 0.4, carbBase: "potato" },
     temperatureC: 14, precipitationMm: 0, isWeekend: false, dayName: "Tuesday",
     daysSinceLastServed: 20, proteinDaysSinceLastServed: 5,
-    expiringUsed: [], pantryUsed: [], usedModel: false,
+    expiringUsed: [], nicheUsed: [], pantryUsed: [], usedModel: false,
     scoreRank: null, poolSize: 10,
     relaxedProteinRule: false, relaxedRepeatRule: false, relaxedBudgetRule: false,
     useItUpMode: false, ...over,
@@ -88,6 +88,36 @@ describe("explainPick", () => {
       expect(withModel).toMatch(/^Picked because/);
       expect(withModel).not.toContain("Random pick");
       expect(s).not.toBe(withModel);
+    });
+  });
+
+  describe("niche pantry stock", () => {
+    it("names a niche item as the reason, distinct from a merely-expiring one", () => {
+      const s = explainPick(input({ nicheUsed: ["tahini"] }));
+      expect(s).toContain("only dish in your queue that uses tahini");
+    });
+
+    it("does not claim food is 'going off' for a niche-only use-it-up night", () => {
+      // Niche and expiring are different failure modes — tahini forced by
+      // use-it-up isn't necessarily anywhere near its expiry date, so the
+      // wording must not imply it is.
+      const s = explainPick(input({ useItUpMode: true, nicheUsed: ["tahini"] }));
+      expect(s).toContain("only thing in your queue that uses tahini");
+      expect(s).not.toContain("goes off");
+      expect(s).not.toContain("go off");
+    });
+
+    it("combines both reasons when a use-it-up night is forced by each", () => {
+      const s = explainPick(input({ useItUpMode: true, expiringUsed: ["cream"], nicheUsed: ["tahini"] }));
+      expect(s).toContain("cream");
+      expect(s).toContain("tahini");
+    });
+
+    it("prefers the expiring reason over the niche one when both are present but not forcing", () => {
+      // Imminent expiry is the more urgent fact; niche-ness is a slower risk.
+      const s = explainPick(input({ expiringUsed: ["cream"], nicheUsed: ["tahini"] }));
+      expect(s).toContain("cream");
+      expect(s).not.toContain("tahini");
     });
   });
 

@@ -26,6 +26,12 @@ export interface ExplainInput {
   proteinDaysSinceLastServed: number | null;
   /** Pantry items this meal would use that expire within a few days. */
   expiringUsed: string[];
+  /**
+   * Pantry items this meal would use that only it (or almost nothing else
+   * approved) can ever clear — a waste risk independent of expiry date, so
+   * distinct from expiringUsed even though both can force a use-it-up night.
+   */
+  nicheUsed: string[];
   /** Pantry names this meal uses at all. */
   pantryUsed: string[];
   usedModel: boolean;
@@ -56,15 +62,26 @@ function list(items: string[]): string {
 export function explainPick(input: ExplainInput): string {
   const reasons: string[] = [];
 
-  // A forced hand is the most important thing to say, so it leads.
-  if (input.useItUpMode && input.expiringUsed.length > 0) {
-    return `Use-it-up night: this clears ${list(input.expiringUsed)} before ${
-      input.expiringUsed.length === 1 ? "it goes" : "they go"
-    } off.`;
+  // A forced hand is the most important thing to say, so it leads. Two
+  // distinct reasons can force a use-it-up night — imminent expiry, or an
+  // ingredient with nowhere else to go — and "before it goes off" is simply
+  // false for the second kind, so they need separate wording rather than
+  // one clause stretched to cover both.
+  if (input.useItUpMode && (input.expiringUsed.length > 0 || input.nicheUsed.length > 0)) {
+    const parts: string[] = [];
+    if (input.expiringUsed.length > 0) {
+      parts.push(`clears ${list(input.expiringUsed)} before ${input.expiringUsed.length === 1 ? "it goes" : "they go"} off`);
+    }
+    if (input.nicheUsed.length > 0) {
+      parts.push(`is the only thing in your queue that uses ${list(input.nicheUsed)}`);
+    }
+    return `Use-it-up night: this ${parts.join(", and it ")}.`;
   }
 
   if (input.expiringUsed.length > 0) {
     reasons.push(`it uses up ${list(input.expiringUsed)} before ${input.expiringUsed.length === 1 ? "it turns" : "they turn"}`);
+  } else if (input.nicheUsed.length > 0) {
+    reasons.push(`it's the only dish in your queue that uses ${list(input.nicheUsed)}`);
   } else if (input.pantryUsed.length > 0) {
     reasons.push(`you already have ${list(input.pantryUsed.slice(0, 3))} in`);
   }

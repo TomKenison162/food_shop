@@ -3,7 +3,7 @@ import type { RotationResult } from "../rotation";
 import { buildFeedbackLink } from "../feedbackLink";
 import { buildPantryMissingLink } from "../pantryLink";
 import { DECLINE_LABELS, DECLINE_REASONS } from "../declineReasons";
-import { getPantrySummary } from "../pantry/pantry";
+import { getPantrySummary, nicheItems } from "../pantry/pantry";
 import { costForPortions, WEEKLY_BUDGET_GBP } from "../budget";
 import { ingredientsForMeal } from "../shoppingList";
 import { dishFeatures, type DishFeatures } from "../ml/dishFeatures";
@@ -99,7 +99,11 @@ export async function sendDinnerReminder(
   const { meal, portions, cost, firstShopCost: firstShop, spentThisWeekGBP, firstShopSpentThisWeekGBP } =
     result;
 
-  const [ingredients, pantry] = await Promise.all([ingredientsForMeal(meal.id), getPantrySummary(userId)]);
+  const [ingredients, pantry, niche] = await Promise.all([
+    ingredientsForMeal(meal.id),
+    getPantrySummary(userId),
+    nicheItems(userId),
+  ]);
   const pantryByName = new Map(pantry.map((p) => [p.genericName, p]));
 
   const toBuy = ingredients.filter((i) => !pantryByName.has(i.genericName));
@@ -148,6 +152,29 @@ export async function sendDinnerReminder(
           return `<li>${esc(i.genericName)}, ~${p.gramsRemaining}g on hand${
             p.daysLeft !== null && p.daysLeft <= 2 ? " <strong>(use it up)</strong>" : ""
           } <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
+        })
+        .join("")}</ul>`
+    : "";
+
+  /**
+   * A standing note about pantry stock with nowhere else to go, independent
+   * of tonight's dish. "Already in" above only lists overlap with tonight's
+   * ingredients, so a niche item never gets a mention there unless tonight
+   * happens to be the one dish that uses it — which defeats the point of a
+   * proactive warning. EXPIRING_SOON_DAYS-based use-it-up has the same gap
+   * from the other direction: it only notices a niche item a few days before
+   * it's already too late. This runs every night regardless.
+   */
+  const nicheToMention = niche.filter((n) => !covered.some((c) => c.genericName === n.genericName));
+  const nicheHtml = nicheToMention.length
+    ? `<h2>Also in your pantry</h2><ul>${nicheToMention
+        .map((n) => {
+          const missing = buildPantryMissingLink(appUrl, userId, result.planDate, n.genericName);
+          const note =
+            n.onlyUsedBy.length > 0
+              ? `only <strong>${n.onlyUsedBy.map((m) => esc(m.mealName)).join(", ")}</strong> uses this`
+              : "nothing in your queue uses this any more";
+          return `<li>${esc(n.genericName)}, ~${n.gramsRemaining}g &mdash; ${note} <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
         })
         .join("")}</ul>`
     : "";
@@ -229,6 +256,7 @@ export async function sendDinnerReminder(
     <h2>Shopping list${toBuyTotal !== null ? ` &middot; £${toBuyTotal.toFixed(2)}` : ""}</h2>
     ${ingredientsHtml}
     ${coveredHtml}
+    ${nicheHtml}
 
     ${alternativesHtml}
     ${declineHtml}

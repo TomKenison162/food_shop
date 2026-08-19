@@ -2,7 +2,7 @@ import { and, desc, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
 import { approvedQueue, meals, mealHistory, mealIngredients, mealOffers, mlModel, pantryItems } from "./db/schema";
 import { addDaysToDateString, dayOfWeekForDateString, londonDateString } from "./date";
-import { expiringOverlapByMeal, pantryOverlapGrams } from "./pantry/pantry";
+import { expiringOverlapByMeal, nicheOverlapByMeal, pantryOverlapGrams } from "./pantry/pantry";
 import { explainPick } from "./explainPick";
 import { dishFeatures } from "./ml/dishFeatures";
 import { getCurrentWeather } from "./weather/weather";
@@ -137,9 +137,19 @@ export async function planMealForDate(
   const yesterday = await getPlannedMeal(userId, addDaysToDateString(date, -1));
   const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(userId, date);
   const expiring = await expiringOverlapByMeal(userId, date);
+  // A pantry item bought for one specific dish has exactly one route out —
+  // nothing else in the queue will ever clear it, so it's a waste risk long
+  // before the calendar forces the issue via EXPIRING_SOON_DAYS. Merged into
+  // the same overlap pool as expiring stock so a use-it-up night can clear
+  // either kind; combinedOverlap below is what actually reaches the decision.
+  const niche = await nicheOverlapByMeal(userId, date);
 
   const scoreList = await scoreMealsForTonight(userId, approvedMeals, context);
   const scores = scoreList ? new Map(approvedMeals.map((m, i) => [m.id, scoreList[i]])) : null;
+
+  const combinedOverlap = new Map<number, number>();
+  for (const [id, v] of expiring) combinedOverlap.set(id, (combinedOverlap.get(id) ?? 0) + v.grams);
+  for (const [id, v] of niche) combinedOverlap.set(id, (combinedOverlap.get(id) ?? 0) + v.grams);
 
   const decision = decideTonightsDinner({
     portions,
@@ -149,7 +159,7 @@ export async function planMealForDate(
     spentThisWeek,
     weeklyBudget: WEEKLY_BUDGET_GBP,
     scores,
-    expiringOverlap: new Map([...expiring].map(([id, v]) => [id, v.grams])),
+    expiringOverlap: combinedOverlap,
     useItUp,
   });
   if (!decision) return null;
@@ -246,6 +256,7 @@ export async function planMealForDate(
     daysSinceLastServed: lastServed,
     proteinDaysSinceLastServed: proteinLastServed,
     expiringUsed: expiring.get(chosen.id)?.names ?? [],
+    nicheUsed: niche.get(chosen.id)?.names ?? [],
     pantryUsed: chosenSnap.pantryUsedNames,
     usedModel: decision.usedModel,
     scoreRank: decision.diagnostics.chosenScoreRank,
