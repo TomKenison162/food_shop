@@ -156,29 +156,6 @@ export async function sendDinnerReminder(
         .join("")}</ul>`
     : "";
 
-  /**
-   * A standing note about pantry stock with nowhere else to go, independent
-   * of tonight's dish. "Already in" above only lists overlap with tonight's
-   * ingredients, so a niche item never gets a mention there unless tonight
-   * happens to be the one dish that uses it — which defeats the point of a
-   * proactive warning. EXPIRING_SOON_DAYS-based use-it-up has the same gap
-   * from the other direction: it only notices a niche item a few days before
-   * it's already too late. This runs every night regardless.
-   */
-  const nicheToMention = niche.filter((n) => !covered.some((c) => c.genericName === n.genericName));
-  const nicheHtml = nicheToMention.length
-    ? `<h2>Also in your pantry</h2><ul>${nicheToMention
-        .map((n) => {
-          const missing = buildPantryMissingLink(appUrl, userId, result.planDate, n.genericName);
-          const note =
-            n.onlyUsedBy.length > 0
-              ? `only <strong>${n.onlyUsedBy.map((m) => esc(m.mealName)).join(", ")}</strong> uses this`
-              : "nothing in your queue uses this any more";
-          return `<li>${esc(n.genericName)}, ~${n.gramsRemaining}g &mdash; ${note} <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
-        })
-        .join("")}</ul>`
-    : "";
-
   const instructionsHtml = `<ol>${meal.instructions.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
 
   const date = result.planDate;
@@ -191,6 +168,46 @@ export async function sendDinnerReminder(
     };padding:9px 16px;text-decoration:none;border-radius:999px;margin:0 6px 6px 0;font-size:14px">${esc(
       label
     )}</a>`;
+
+  /**
+   * A standing note about pantry stock with nowhere else to go, independent
+   * of tonight's dish. "Already in" above only lists overlap with tonight's
+   * ingredients, so a niche item never gets a mention there unless tonight
+   * happens to be the one dish that uses it — which defeats the point of a
+   * proactive warning. EXPIRING_SOON_DAYS-based use-it-up has the same gap
+   * from the other direction: it only notices a niche item a few days before
+   * it's already too late. This runs every night regardless.
+   *
+   * "Cook this tonight" reuses the exact same action="choose" link the
+   * alternatives below use — it doesn't need to be one of tonight's offered
+   * options; setPlanForDate only requires the meal to exist. No new
+   * mechanism, just pointed at the one dish that clears this ingredient
+   * instead of at a runner-up from the current offer group.
+   */
+  const nicheToMention = niche.filter((n) => !covered.some((c) => c.genericName === n.genericName));
+  const nicheHtml = nicheToMention.length
+    ? `<h2>Also in your pantry</h2><ul>${nicheToMention
+        .map((n) => {
+          const missing = buildPantryMissingLink(appUrl, userId, result.planDate, n.genericName);
+          const cookLink =
+            n.onlyUsedBy.length > 0
+              ? buildFeedbackLink(appUrl, {
+                  userId,
+                  mealId: n.onlyUsedBy[0].mealId,
+                  date: result.planDate,
+                  action: "choose",
+                })
+              : null;
+          const note =
+            n.onlyUsedBy.length > 0
+              ? `only <strong>${n.onlyUsedBy.map((m) => esc(m.mealName)).join(", ")}</strong> uses this`
+              : "nothing in your queue uses this any more";
+          return `<li>${esc(n.genericName)}, ~${n.gramsRemaining}g &mdash; ${note}
+            ${cookLink && n.onlyUsedBy[0].mealId !== meal.id ? btn(cookLink, `Cook ${n.onlyUsedBy[0].mealName} instead`, true) : ""}
+            <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
+        })
+        .join("")}</ul>`
+    : "";
 
   /**
    * The alternatives are the point of this email, not garnish: picking one
