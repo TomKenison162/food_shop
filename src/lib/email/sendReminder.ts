@@ -129,32 +129,32 @@ export async function sendDinnerReminder(
     )
   );
 
-  const line = (i: (typeof ingredients)[number]) => {
+  /**
+   * One list in the recipe's own order, not two separate headed sections.
+   * Splitting "buy" from "already in" scattered the recipe's actual
+   * ingredient list across two places — this way the whole recipe is
+   * legible as one thing, with each line simply saying whether it needs
+   * buying or is already covered.
+   *
+   * Pantry stock is inferred, not counted, so a covered line still carries
+   * the one-tap correction. An over-stated pantry is the expensive kind of
+   * wrong: the shopping list leaves the item out and you get home unable
+   * to cook, so it stays cheap to say "actually, no" right where the claim
+   * is made.
+   */
+  const ingredientLine = (i: (typeof ingredients)[number]) => {
+    const p = pantryByName.get(i.genericName);
+    if (p) {
+      const missing = buildPantryMissingLink(appUrl, userId, result.planDate, i.genericName);
+      const useItUpNote = p.daysLeft !== null && p.daysLeft <= 2 ? ` <strong>(use it up)</strong>` : "";
+      return `<li>${esc(i.genericName)} (${esc(i.quantity)}) <span style="color:#6b7280">&mdash; already in, ~${p.gramsRemaining}g${useItUpNote}</span> <a href="${missing}" style="color:#9ca3af;font-size:12px">not got it</a></li>`;
+    }
     const price = i.skuPrice !== null ? ` £${i.skuPrice}` : "";
     const estNote = i.isEstimated ? ` <em style="color:#b45309">(estimated, no product match)</em>` : "";
     return `<li>${esc(i.skuName ?? i.genericName)} (${esc(i.quantity)})${price}${estNote}</li>`;
   };
 
-  const ingredientsHtml = toBuy.length
-    ? `<ul>${toBuy.map(line).join("")}</ul>`
-    : "<p>Nothing to buy. Your pantry covers it.</p>";
-
-  /**
-   * Pantry stock is inferred, not counted, so each line carries a one-tap
-   * correction. An over-stated pantry is the expensive kind of wrong: the
-   * shopping list leaves the item out and you get home unable to cook.
-   */
-  const coveredHtml = covered.length
-    ? `<h2>Already in</h2><ul>${covered
-        .map((i) => {
-          const p = pantryByName.get(i.genericName)!;
-          const missing = buildPantryMissingLink(appUrl, userId, result.planDate, i.genericName);
-          return `<li>${esc(i.genericName)}, ~${p.gramsRemaining}g on hand${
-            p.daysLeft !== null && p.daysLeft <= 2 ? " <strong>(use it up)</strong>" : ""
-          } <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
-        })
-        .join("")}</ul>`
-    : "";
+  const ingredientsHtml = `<ul>${ingredients.map(ingredientLine).join("")}</ul>`;
 
   const instructionsHtml = `<ol>${meal.instructions.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`;
 
@@ -178,33 +178,47 @@ export async function sendDinnerReminder(
    * from the other direction: it only notices a niche item a few days before
    * it's already too late. This runs every night regardless.
    *
-   * "Cook this tonight" reuses the exact same action="choose" link the
+   * "cook X instead" reuses the exact same action="choose" link the
    * alternatives below use — it doesn't need to be one of tonight's offered
    * options; setPlanForDate only requires the meal to exist. No new
    * mechanism, just pointed at the one dish that clears this ingredient
    * instead of at a runner-up from the current offer group.
+   *
+   * Styled as a small underlined text link, matching "not got it" rather
+   * than the bold pill buttons used for the actual decision points (accept,
+   * decline, choose an alternative) — this is a minor, easy-to-ignore aside
+   * about pantry stock, not one of tonight's real choices, and shouldn't
+   * visually compete with them.
    */
   const nicheToMention = niche.filter((n) => !covered.some((c) => c.genericName === n.genericName));
   const nicheHtml = nicheToMention.length
     ? `<h2>Also in your pantry</h2><ul>${nicheToMention
         .map((n) => {
           const missing = buildPantryMissingLink(appUrl, userId, result.planDate, n.genericName);
-          const cookLink =
-            n.onlyUsedBy.length > 0
-              ? buildFeedbackLink(appUrl, {
-                  userId,
-                  mealId: n.onlyUsedBy[0].mealId,
-                  date: result.planDate,
-                  action: "choose",
-                })
-              : null;
+          const canCook = n.onlyUsedBy.length > 0 && n.onlyUsedBy[0].mealId !== meal.id;
+          const cookLink = canCook
+            ? buildFeedbackLink(appUrl, {
+                userId,
+                mealId: n.onlyUsedBy[0].mealId,
+                date: result.planDate,
+                action: "choose",
+              })
+            : null;
           const note =
             n.onlyUsedBy.length > 0
               ? `only <strong>${n.onlyUsedBy.map((m) => esc(m.mealName)).join(", ")}</strong> uses this`
               : "nothing in your queue uses this any more";
-          return `<li>${esc(n.genericName)}, ~${n.gramsRemaining}g &mdash; ${note}
-            ${cookLink && n.onlyUsedBy[0].mealId !== meal.id ? btn(cookLink, `Cook ${n.onlyUsedBy[0].mealName} instead`, true) : ""}
-            <a href="${missing}" style="color:#9ca3af;font-size:13px">not got it</a></li>`;
+          const actions = [
+            cookLink
+              ? `<a href="${cookLink}" style="color:#6b7280;text-decoration:underline">cook ${esc(
+                  n.onlyUsedBy[0].mealName
+                )} instead</a>`
+              : null,
+            `<a href="${missing}" style="color:#9ca3af">not got it</a>`,
+          ]
+            .filter(Boolean)
+            .join(" &middot; ");
+          return `<li>${esc(n.genericName)}, ~${n.gramsRemaining}g &mdash; ${note} <span style="font-size:12px">${actions}</span></li>`;
         })
         .join("")}</ul>`
     : "";
@@ -270,9 +284,8 @@ export async function sendDinnerReminder(
     <h2>Method</h2>
     ${instructionsHtml}
 
-    <h2>Shopping list${toBuyTotal !== null ? ` &middot; £${toBuyTotal.toFixed(2)}` : ""}</h2>
+    <h2>Ingredients${toBuyTotal !== null ? ` &middot; £${toBuyTotal.toFixed(2)} to buy` : ""}</h2>
     ${ingredientsHtml}
-    ${coveredHtml}
     ${nicheHtml}
 
     ${alternativesHtml}
