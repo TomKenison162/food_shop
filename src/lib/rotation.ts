@@ -65,6 +65,58 @@ export async function getPlannedMeal(userId: number, date: string): Promise<Plan
  * `excludeMealIds` lets a declined suggestion be replaced without the
  * engine handing back the same dish.
  */
+/**
+ * True for a Postgres unique-constraint violation (SQLSTATE 23505) — what
+ * meal_history_one_live_plan_idx raises when two concurrent requests both
+ * try to insert the live plan for the same user+date. Narrowed to that one
+ * code deliberately: any other error is a real failure and must still throw.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code: unknown }).code === "23505";
+}
+
+/**
+ * Builds a RotationResult from whatever plan is already live for `date`, or
+ * null if none is. Shared by the ordinary "already planned" early return and
+ * by the unique-constraint conflict handler below — the two are the same
+ * situation (someone already has a live plan for today) reached by two
+ * different routes, one expected and one a race.
+ */
+async function existingPlanResult(userId: number, date: string): Promise<RotationResult | null> {
+  const existing = await getPlannedMeal(userId, date);
+  if (!existing) return null;
+  const meal = await db.query.meals.findFirst({ where: eq(meals.id, existing.mealId) });
+  if (!meal) return null;
+
+  const [spent, firstShopSpent] = await spendTotals(userId, date);
+  const prior = await latestOfferForDate(userId, date);
+  return {
+    meal,
+    explanation: "",
+    useItUpMode: false,
+    alternatives: prior.alternatives,
+    offerGroup: prior.offerGroup,
+    planDate: date,
+    portions: existing.portions === 1 ? 1 : 2,
+    cost: existing.costIncurred !== null ? Number(existing.costIncurred) : null,
+    firstShopCost: existing.firstShopCost !== null ? Number(existing.firstShopCost) : null,
+    context: {
+      dayOfWeek: existing.dayOfWeek ?? dayOfWeekForDateString(date),
+      isWeekend: existing.isWeekend ?? false,
+      temperatureC: existing.temperatureC !== null ? Number(existing.temperatureC) : null,
+      apparentTemperatureC: existing.apparentTemperatureC !== null ? Number(existing.apparentTemperatureC) : null,
+      precipitationMm: existing.precipitationMm !== null ? Number(existing.precipitationMm) : null,
+    },
+    alreadySelectedToday: true,
+    relaxedProteinRule: false,
+    relaxedRepeatRule: false,
+    relaxedBudgetRule: false,
+    usedModel: false,
+    spentThisWeekGBP: spent,
+    firstShopSpentThisWeekGBP: firstShopSpent,
+  };
+}
+
 export async function planMealForDate(
   userId: number,
   date: string,
@@ -74,39 +126,8 @@ export async function planMealForDate(
   const { excludeMealIds = [], now = new Date(), useItUp = false } = opts;
   const portions = await getPortionsSetting(userId);
 
-  const existing = await getPlannedMeal(userId, date);
-  if (existing) {
-    const meal = await db.query.meals.findFirst({ where: eq(meals.id, existing.mealId) });
-    if (meal) {
-      const [spent, firstShopSpent] = await spendTotals(userId, date);
-      const prior = await latestOfferForDate(userId, date);
-      return {
-        meal,
-        explanation: "",
-        useItUpMode: false,
-        alternatives: prior.alternatives,
-        offerGroup: prior.offerGroup,
-        planDate: date,
-        portions: existing.portions === 1 ? 1 : 2,
-        cost: existing.costIncurred !== null ? Number(existing.costIncurred) : null,
-        firstShopCost: existing.firstShopCost !== null ? Number(existing.firstShopCost) : null,
-        context: {
-          dayOfWeek: existing.dayOfWeek ?? dayOfWeekForDateString(date),
-          isWeekend: existing.isWeekend ?? false,
-          temperatureC: existing.temperatureC !== null ? Number(existing.temperatureC) : null,
-          apparentTemperatureC: existing.apparentTemperatureC !== null ? Number(existing.apparentTemperatureC) : null,
-          precipitationMm: existing.precipitationMm !== null ? Number(existing.precipitationMm) : null,
-        },
-        alreadySelectedToday: true,
-        relaxedProteinRule: false,
-        relaxedRepeatRule: false,
-        relaxedBudgetRule: false,
-        usedModel: false,
-        spentThisWeekGBP: spent,
-        firstShopSpentThisWeekGBP: firstShopSpent,
-      };
-    }
-  }
+  const existingResult = await existingPlanResult(userId, date);
+  if (existingResult) return existingResult;
 
   const dow = dayOfWeekForDateString(date);
   // Weather is only meaningful for today; a plan built days ahead can't know
@@ -182,25 +203,39 @@ export async function planMealForDate(
   const lastServed = chosenSnap.daysSinceLastServed;
   const proteinLastServed = chosenSnap.proteinDaysSinceLastServed;
 
-  await db.insert(mealHistory).values({
-    userId,
-    mealId: chosen.id,
-    primaryProtein: chosen.primaryProtein,
-    servedDate: date,
-    portions,
-    costIncurred: cost !== null ? String(cost) : null,
-    firstShopCost: firstShop !== null ? String(firstShop) : null,
-    dayOfWeek: context.dayOfWeek,
-    isWeekend: context.isWeekend,
-    temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
-    apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
-    precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
-    pantryOverlapGrams: String(overlap),
-    daysSinceLastServed: lastServed,
-    proteinDaysSinceLastServed: proteinLastServed,
-    ingredientsCount: ingredientCount,
-    usedModel: decision.usedModel,
-  });
+  try {
+    await db.insert(mealHistory).values({
+      userId,
+      mealId: chosen.id,
+      primaryProtein: chosen.primaryProtein,
+      servedDate: date,
+      portions,
+      costIncurred: cost !== null ? String(cost) : null,
+      firstShopCost: firstShop !== null ? String(firstShop) : null,
+      dayOfWeek: context.dayOfWeek,
+      isWeekend: context.isWeekend,
+      temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
+      apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
+      precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
+      pantryOverlapGrams: String(overlap),
+      daysSinceLastServed: lastServed,
+      proteinDaysSinceLastServed: proteinLastServed,
+      ingredientsCount: ingredientCount,
+      usedModel: decision.usedModel,
+    });
+  } catch (err) {
+    // Two near-simultaneous calls for the same date (a double-tapped link is
+    // the likely cause; this shipped after exactly that happened live —
+    // meal_history_one_live_plan_idx now makes it a 23505 instead of a
+    // silent duplicate row). Whoever's insert landed first is exactly as
+    // valid a plan as the one that just lost the race, so return theirs
+    // rather than erroring out a request that did nothing wrong.
+    if (isUniqueViolation(err)) {
+      const winner = await existingPlanResult(userId, date);
+      if (winner) return winner;
+    }
+    throw err;
+  }
 
   // No pantry side effects here on purpose. Planning a meal only *proposes*
   // it — the pantry must not move until a "Yes" reply confirms it was
@@ -327,26 +362,38 @@ export async function setPlanForDate(userId: number, date: string, mealId: numbe
   const lastServed = snap.daysSinceLastServed;
   const proteinLastServed = snap.proteinDaysSinceLastServed;
 
-  await db.insert(mealHistory).values({
-    userId,
-    mealId: meal.id,
-    primaryProtein: meal.primaryProtein,
-    servedDate: date,
-    portions,
-    costIncurred: cost !== null ? String(cost) : null,
-    firstShopCost: firstShop !== null ? String(firstShop) : null,
-    dayOfWeek: context.dayOfWeek,
-    isWeekend: context.isWeekend,
-    temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
-    apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
-    precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
-    pantryOverlapGrams: String(overlap),
-    daysSinceLastServed: lastServed,
-    proteinDaysSinceLastServed: proteinLastServed,
-    ingredientsCount: ingredientCount,
-    // An explicitly chosen alternative is your decision, not a prediction.
-    usedModel: false,
-  });
+  try {
+    await db.insert(mealHistory).values({
+      userId,
+      mealId: meal.id,
+      primaryProtein: meal.primaryProtein,
+      servedDate: date,
+      portions,
+      costIncurred: cost !== null ? String(cost) : null,
+      firstShopCost: firstShop !== null ? String(firstShop) : null,
+      dayOfWeek: context.dayOfWeek,
+      isWeekend: context.isWeekend,
+      temperatureC: context.temperatureC !== null ? String(context.temperatureC) : null,
+      apparentTemperatureC: context.apparentTemperatureC != null ? String(context.apparentTemperatureC) : null,
+      precipitationMm: context.precipitationMm != null ? String(context.precipitationMm) : null,
+      pantryOverlapGrams: String(overlap),
+      daysSinceLastServed: lastServed,
+      proteinDaysSinceLastServed: proteinLastServed,
+      ingredientsCount: ingredientCount,
+      // An explicitly chosen alternative is your decision, not a prediction.
+      usedModel: false,
+    });
+  } catch (err) {
+    // Same race as planMealForDate's insert: two concurrent "choose" clicks
+    // (or one choose racing a decline's replacement) both superseded the old
+    // row and both tried to insert a new live one. Whichever lost now gets
+    // told what actually became tonight's plan instead of erroring.
+    if (isUniqueViolation(err)) {
+      const winner = await existingPlanResult(userId, date);
+      if (winner) return winner;
+    }
+    throw err;
+  }
 
   const [spentThisWeek, firstShopSpentThisWeek] = await spendTotals(userId, date);
   const prior = await latestOfferForDate(userId, date);

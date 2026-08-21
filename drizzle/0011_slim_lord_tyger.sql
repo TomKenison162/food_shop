@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "meal_history_one_live_plan_idx" ON "meal_history" USING btree ("user_id","served_date") WHERE "meal_history"."superseded_at" is null;

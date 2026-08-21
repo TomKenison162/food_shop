@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   jsonb,
   pgTable,
@@ -241,13 +242,33 @@ export const mealHistory = pgTable(
      * Set when the suggestion was declined and replaced. The superseded row
      * keeps its `accepted: false` label (it's a real training example) while
      * a fresh row becomes the live plan for that date — which is why
-     * servedDate is indexed rather than unique. "The meal for date D" always
-     * means the row where supersededAt IS NULL.
+     * (userId, servedDate) is not unique outright, only among live rows (see
+     * onlyOneLivePlanPerDay below). "The meal for date D" always means the
+     * row where supersededAt IS NULL.
      */
     supersededAt: timestamp("superseded_at", { withTimezone: true }),
   },
   (t) => ({
     servedDateIdx: index("meal_history_served_date_idx").on(t.servedDate),
+    /**
+     * At most one live (non-superseded) plan per user per day, enforced by
+     * the database rather than trusted to application logic.
+     *
+     * Two near-simultaneous requests for the same decline link (most likely
+     * a double-tap, though a mail client pre-fetching the link would look
+     * identical) each independently checked "is today answered yet?", both
+     * saw no, and both proceeded to supersede-then-insert with no locking
+     * between them — leaving two live rows for the same day. getPlannedMeal
+     * has no ORDER BY, so which one it returned was arbitrary from then on:
+     * whichever protein it picked fed "don't repeat yesterday's protein",
+     * and only one of the two ever got superseded when a reply came in for
+     * either, orphaning the other indefinitely. A concurrent second insert
+     * now fails outright instead of silently succeeding twice — see the
+     * catch around the insert in rotation.ts for what happens next.
+     */
+    onlyOneLivePlanPerDay: uniqueIndex("meal_history_one_live_plan_idx")
+      .on(t.userId, t.servedDate)
+      .where(sql`${t.supersededAt} is null`),
   })
 );
 
